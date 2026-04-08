@@ -15,10 +15,12 @@ type Code struct {
 }
 
 func NewCode(svc *Service) *Code {
-	return &Code{
+	c := &Code{
 		Service:          svc,
 		PythonCodeServer: corecode.NewPythonCodeServer(".", nil),
 	}
+	c.registerOverrides()
+	return c
 }
 
 func (c *Code) sourceDir() string {
@@ -34,8 +36,17 @@ func (c *Code) sourceDir() string {
 func (c *Code) ensureInit() {
 	if !c.initialized {
 		c.PythonCodeServer = corecode.NewPythonCodeServer(c.sourceDir(), nil)
+		c.registerOverrides() // re-register after re-init
 		c.initialized = true
 	}
+}
+
+// registerOverrides wires Python-specific handlers on top of PythonCodeServer.
+// PythonCodeServer already provides: list_symbols (AST), get_project_info, list_dependencies.
+// We add: get_call_graph (AST-based) and find_references (grep-based).
+func (c *Code) registerOverrides() {
+	c.Override("get_call_graph", c.handleGetCallGraph)
+	c.Override("find_references", c.handleFindReferences)
 }
 
 // Lazy init wrappers for standalone gRPC RPCs.
