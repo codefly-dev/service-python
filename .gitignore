@@ -1,0 +1,6 @@
+service-python
+python-agent
+go.work
+go.work.sum
+*.test
+*.out

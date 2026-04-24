@@ -1,0 +1,34 @@
+package runtime_test
+
+import (
+	"testing"
+
+	"github.com/codefly-dev/core/resources"
+
+	pythonruntime "github.com/codefly-dev/service-python/pkg/runtime"
+	pythonservice "github.com/codefly-dev/service-python/pkg/service"
+)
+
+// TestRuntimeEmbedsService verifies the embedding chain:
+//
+//	runtime.Runtime → *service.Service → *services.Base
+//
+// Specializations rely on this chain to inherit Wool, Logger, Location,
+// Identity, etc. via method promotion. If embedding is replaced with a
+// named field this test breaks loudly.
+func TestRuntimeEmbedsService(t *testing.T) {
+	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	rt := pythonruntime.New(svc)
+
+	if rt == nil {
+		t.Fatal("New returned nil")
+	}
+	if rt.Service != svc {
+		t.Error("embedded Service is not the same pointer passed to New")
+	}
+	// Promoted fields from *services.Base must be reachable on *Runtime.
+	// If these compile, the chain is intact; no runtime assertion needed.
+	_ = rt.Base     // from services.Base promoted through *pythonservice.Service
+	_ = rt.Settings // from pythonservice.Service
+	_ = rt.Runtime  // from services.RuntimeServer
+}

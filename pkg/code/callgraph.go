@@ -1,15 +1,17 @@
-package main
+package code
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	codev0 "github.com/codefly-dev/core/generated/go/codefly/services/code/v0"
+	runners "github.com/codefly-dev/core/runners/base"
 )
 
 // CallEdge is a call relationship between two functions.
@@ -33,33 +35,16 @@ type ImplementsEdge struct {
 
 // CallGraphResult is the full result of Python call graph analysis.
 type CallGraphResult struct {
-	Calls      []CallEdge      `json:"calls"`
+	Calls      []CallEdge       `json:"calls"`
 	Implements []ImplementsEdge `json:"implements"`
 	Module     string           `json:"module"`
 	Error      string           `json:"error,omitempty"`
 }
 
-// handleGetCallGraph extracts call edges from Python AST.
-// Uses a Python script that walks all .py files and extracts function-to-function calls.
-func (c *Code) handleGetCallGraph(ctx context.Context, req *codev0.CodeRequest) (*codev0.CodeResponse, error) {
-	c.ensureInit()
-	srcDir := c.sourceDir()
-
-	result := c.computePythonCallGraph(ctx, srcDir)
-
-	data, _ := json.Marshal(result)
-	return &codev0.CodeResponse{
-		Result: &codev0.CodeResponse_Fix{
-			Fix: &codev0.FixResponse{
-				Success: result.Error == "",
-				Content: string(data),
-				Error:   result.Error,
-			},
-		},
-	}, nil
-}
-
-func (c *Code) computePythonCallGraph(ctx context.Context, srcDir string) CallGraphResult {
+// ComputePythonCallGraph walks the Python source tree with an ast-based
+// script and returns all call edges + inheritance edges. Exported so the
+// Tooling layer can invoke it without going through the Code.Execute bus.
+func (c *Code) ComputePythonCallGraph(ctx context.Context, srcDir string) CallGraphResult {
 	script := `
 import json, ast, os, sys
 
@@ -85,14 +70,12 @@ for root, dirs, files in os.walk(workdir):
         except:
             continue
 
-        # Build class hierarchy for methods
-        class_map = {}  # maps AST node id → class name
+        class_map = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 for item in ast.iter_child_nodes(node):
                     if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         class_map[id(item)] = node.name
-                # Inheritance
                 for base in node.bases:
                     base_name = ast.unparse(base) if hasattr(ast, 'unparse') else ''
                     if base_name:
@@ -103,7 +86,6 @@ for root, dirs, files in os.walk(workdir):
                             'interface_name': base_name,
                         })
 
-        # Extract function calls
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -149,22 +131,40 @@ for root, dirs, files in os.walk(workdir):
                     'line': getattr(child, 'lineno', 0),
                 })
 
-# Limit output size
 calls = calls[:10000]
 implements = implements[:2000]
 
 print(json.dumps({'calls': calls, 'implements': implements, 'module': workdir}))
 `
 
-	cmd := exec.CommandContext(ctx, "python3", "-c", script, srcDir)
-	cmd.Dir = srcDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
+	// Prefer the plugin's configured RunnerEnvironment (native/docker/nix)
+	// so AST analysis uses the same interpreter as the running service.
+	// Pre-Init falls through ResolveStandaloneEnvironment which picks Nix
+	// if declared, native otherwise — keeps mode consistency when possible.
+	env := c.Service.ActiveEnv
+	if env == nil {
+		var rctx *basev0.RuntimeContext
+		if c.Service.Base != nil && c.Service.Base.Runtime != nil {
+			rctx = c.Service.Base.Runtime.RuntimeContext
+		}
+		env = runners.ResolveStandaloneEnvironment(ctx, srcDir, rctx)
+	}
+	proc, procErr := env.NewProcess("python3", "-c", script, srcDir)
+	if procErr != nil {
 		return CallGraphResult{
 			Module: srcDir,
-			Error:  fmt.Sprintf("python call graph: %v: %s", err, string(out)),
+			Error:  fmt.Sprintf("python call graph process: %v", procErr),
 		}
 	}
+	var buf bytes.Buffer
+	proc.WithOutput(&buf)
+	if runErr := proc.Run(ctx); runErr != nil {
+		return CallGraphResult{
+			Module: srcDir,
+			Error:  fmt.Sprintf("python call graph: %v: %s", runErr, buf.String()),
+		}
+	}
+	out := buf.Bytes()
 
 	var result CallGraphResult
 	if err := json.Unmarshal(out, &result); err != nil {
@@ -179,8 +179,8 @@ print(json.dumps({'calls': calls, 'implements': implements, 'module': workdir}))
 
 // handleFindReferences finds all usages of a symbol via grep + AST.
 func (c *Code) handleFindReferences(ctx context.Context, req *codev0.CodeRequest) (*codev0.CodeResponse, error) {
-	c.ensureInit()
-	srcDir := c.sourceDir()
+	c.EnsureInit()
+	srcDir := c.SourceDir()
 
 	refs := req.GetFindReferences()
 	if refs == nil {
@@ -191,8 +191,7 @@ func (c *Code) handleFindReferences(ctx context.Context, req *codev0.CodeRequest
 		}, nil
 	}
 
-	// Read the symbol name at the given position.
-	symbolName, err := c.symbolAtPosition(srcDir, refs.File, refs.Line, refs.Column)
+	symbolName, err := symbolAtPosition(srcDir, refs.File, refs.Line, refs.Column)
 	if err != nil || symbolName == "" {
 		return &codev0.CodeResponse{
 			Result: &codev0.CodeResponse_FindReferences{
@@ -201,7 +200,6 @@ func (c *Code) handleFindReferences(ctx context.Context, req *codev0.CodeRequest
 		}, nil
 	}
 
-	// Grep for the symbol name across all Python files.
 	locations := c.grepForSymbol(ctx, srcDir, symbolName)
 
 	return &codev0.CodeResponse{
@@ -213,42 +211,31 @@ func (c *Code) handleFindReferences(ctx context.Context, req *codev0.CodeRequest
 	}, nil
 }
 
-// symbolAtPosition extracts the symbol name at file:line:col.
-func (c *Code) symbolAtPosition(srcDir, file string, line, col int32) (string, error) {
+func symbolAtPosition(srcDir, file string, line, col int32) (string, error) {
 	absPath := file
 	if !filepath.IsAbs(file) {
 		absPath = filepath.Join(srcDir, file)
 	}
-
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return "", err
 	}
-
 	lines := strings.Split(string(data), "\n")
 	if int(line) < 1 || int(line) > len(lines) {
 		return "", fmt.Errorf("line %d out of range", line)
 	}
-
 	lineText := lines[line-1]
 	if int(col) < 1 || int(col) > len(lineText) {
-		// Try to find any identifier on this line.
 		col = 1
 	}
-
-	// Extract the identifier at the given column.
 	start := int(col) - 1
 	end := start
-
-	// Expand left to find start of identifier.
 	for start > 0 && isIdentChar(lineText[start-1]) {
 		start--
 	}
-	// Expand right to find end of identifier.
 	for end < len(lineText) && isIdentChar(lineText[end]) {
 		end++
 	}
-
 	if start >= end {
 		return "", nil
 	}
@@ -259,12 +246,26 @@ func isIdentChar(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
 }
 
-// grepForSymbol finds all occurrences of a symbol name in Python files.
 func (c *Code) grepForSymbol(ctx context.Context, srcDir, symbol string) []*codev0.Location {
-	// Use grep for speed.
-	cmd := exec.CommandContext(ctx, "grep", "-rn", "--include=*.py",
-		"-w", symbol, srcDir)
-	out, _ := cmd.CombinedOutput()
+	// Route grep through the plugin's active RunnerEnvironment so a
+	// Docker-mode Python agent searches its own mounted tree. Pre-Init
+	// uses ResolveStandaloneEnvironment which honors declared context.
+	env := c.Service.ActiveEnv
+	if env == nil {
+		var rctx *basev0.RuntimeContext
+		if c.Service.Base != nil && c.Service.Base.Runtime != nil {
+			rctx = c.Service.Base.Runtime.RuntimeContext
+		}
+		env = runners.ResolveStandaloneEnvironment(ctx, srcDir, rctx)
+	}
+	proc, procErr := env.NewProcess("grep", "-rn", "--include=*.py", "-w", symbol, srcDir)
+	if procErr != nil {
+		return nil
+	}
+	var buf bytes.Buffer
+	proc.WithOutput(&buf)
+	_ = proc.Run(ctx) // grep returns non-zero on no match; that's fine
+	out := buf.Bytes()
 
 	var locations []*codev0.Location
 	for _, line := range strings.Split(string(out), "\n") {
@@ -272,7 +273,6 @@ func (c *Code) grepForSymbol(ctx context.Context, srcDir, symbol string) []*code
 		if line == "" {
 			continue
 		}
-		// Parse "file:line:content"
 		parts := strings.SplitN(line, ":", 3)
 		if len(parts) < 2 {
 			continue
@@ -286,7 +286,6 @@ func (c *Code) grepForSymbol(ctx context.Context, srcDir, symbol string) []*code
 		lineNum := int32(0)
 		fmt.Sscanf(parts[1], "%d", &lineNum)
 
-		// Find column of symbol in the line.
 		col := int32(1)
 		if len(parts) >= 3 {
 			idx := strings.Index(parts[2], symbol)
