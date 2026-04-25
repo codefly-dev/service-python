@@ -13,6 +13,7 @@ import (
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	runners "github.com/codefly-dev/core/runners/base"
 	pythonhelpers "github.com/codefly-dev/core/runners/python"
+	"github.com/codefly-dev/core/wool"
 
 	pythonservice "github.com/codefly-dev/service-python/pkg/service"
 )
@@ -121,10 +122,15 @@ func (s *Runtime) Destroy(_ context.Context, _ *runtimev0.DestroyRequest) (*runt
 //
 // Specializations should NOT override this unless their layer has extra
 // setup (e.g. fixtures) beyond what Init already did.
-func (s *Runtime) Test(ctx context.Context, _ *runtimev0.TestRequest) (*runtimev0.TestResponse, error) {
+func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtimev0.TestResponse, error) {
 	defer s.Wool.Catch()
 
-	s.Infof("running python tests")
+	s.Wool.Info("running python tests",
+		wool.Field("target", req.Target),
+		wool.Field("filters", req.Filters),
+		wool.Field("coverage", req.Coverage),
+		wool.Field("timeout", req.Timeout),
+		wool.Field("extra_args", req.ExtraArgs))
 
 	opts := pythonhelpers.TestOptions{
 		// Stream per-test events through the logger so the CLI TUI shows
@@ -141,6 +147,15 @@ func (s *Runtime) Test(ctx context.Context, _ *runtimev0.TestRequest) (*runtimev
 		},
 		// Persist raw output for post-mortem. Best-effort.
 		CacheDir: filepath.Join(s.Service.SourceLocation, ".cache"),
+
+		// Forward CLI flags to pytest.
+		Target:     req.Target,
+		Filters:    req.Filters,
+		Verbose:    req.Verbose,
+		VerboseSet: true,
+		Timeout:    req.Timeout,
+		Coverage:   req.Coverage,
+		ExtraArgs:  req.ExtraArgs,
 	}
 
 	summary, runErr := pythonhelpers.RunPythonTests(ctx, s.Service.SourceLocation, nil, opts)
