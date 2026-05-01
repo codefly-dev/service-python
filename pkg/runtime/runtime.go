@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/codefly-dev/core/agents/services"
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
@@ -158,16 +159,21 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		ExtraArgs:  req.ExtraArgs,
 	}
 
-	summary, runErr := pythonhelpers.RunPythonTests(ctx, s.Service.SourceLocation, nil, opts)
+	started := time.Now()
+	run, runErr := pythonhelpers.RunPythonTestsStructured(ctx, s.Service.SourceLocation, nil, opts)
+	duration := time.Since(started)
 
-	s.Wool.Forwardf("Tests: %s", summary.SummaryLine())
-	for _, f := range summary.Failures {
-		s.Wool.Forwardf("%s", f)
+	if run != nil {
+		// One-line summary in the agent log. Per-failure detail lives
+		// in the structured response — we deliberately do NOT dump
+		// captured_output to the log; that's the size-discipline win.
+		s.Wool.Forwardf("Tests: %s", run.LegacyTestSummary().SummaryLine())
 	}
 
-	return s.Runtime.TestResponseWithResults(
-		summary.Run, summary.Passed, summary.Failed, summary.Skipped,
-		summary.Coverage, summary.Failures, runErr)
+	if run == nil {
+		return s.Runtime.TestError(runErr)
+	}
+	return run.ToProtoResponse("pytest", req.Suite, duration), runErr
 }
 
 // Lint runs ruff via the core python helper.
