@@ -309,7 +309,9 @@ func (t *Tooling) Build(_ context.Context, _ *toolingv0.BuildRequest) (*toolingv
 }
 
 func (t *Tooling) Test(ctx context.Context, _ *toolingv0.TestRequest) (*toolingv0.TestResponse, error) {
-	resp, err := t.Runtime.Test(ctx, nil)
+	// Pass a non-nil request: Runtime.Test dereferences req.Target, so nil
+	// panicked the agent (and Wool.Catch then nil-deref'd resp.Status).
+	resp, err := t.Runtime.Test(ctx, &runtimev0.TestRequest{})
 	if err != nil {
 		return nil, fmt.Errorf("tooling test: %w", err)
 	}
