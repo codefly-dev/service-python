@@ -133,6 +133,29 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		wool.Field("timeout", req.Timeout),
 		wool.Field("extra_args", req.ExtraArgs))
 
+	// Select the test runner from the source tree (manage.py / runtests.py /
+	// DJANGO_SETTINGS ⇒ django; else pytest — the default). An explicit caller
+	// hint (req.Runner-equivalent via ExtraArgs is not modeled; detection is the
+	// path today) is honored by ResolveTestRunner when present. Both runners go
+	// through `uv run` for provisioning; only the inner command + output format
+	// differ — Mind reads the SAME structured TestResponse either way.
+	if pythonhelpers.ResolveTestRunner("", s.Service.SourceLocation) == pythonhelpers.RunnerDjango {
+		selectors := append([]string{}, req.Filters...)
+		if req.Target != "" {
+			selectors = append(selectors, req.Target)
+		}
+		command := pythonhelpers.DjangoTestCommand(s.Service.SourceLocation)
+		s.Wool.Info("running django tests via uv",
+			wool.Field("command", command), wool.Field("selectors", selectors))
+		djStart := time.Now()
+		djRun, djErr := pythonhelpers.RunUnittestStructured(ctx, s.Service.SourceLocation, command, selectors, nil)
+		if djRun == nil {
+			return s.Runtime.TestError(djErr)
+		}
+		s.Wool.Forwardf("Tests: %s", djRun.LegacyTestSummary().SummaryLine())
+		return djRun.ToProtoResponse("django", req.Suite, time.Since(djStart)), djErr
+	}
+
 	opts := pythonhelpers.TestOptions{
 		// Stream per-test events through the logger so the CLI TUI shows
 		// live RUN/PASS/FAIL feedback instead of waiting for the summary.
