@@ -12,6 +12,7 @@ import (
 
 	"github.com/codefly-dev/core/agents/services"
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
 	pythonhelpers "github.com/codefly-dev/core/runners/python"
 	"github.com/codefly-dev/core/wool"
@@ -133,6 +134,28 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		wool.Field("timeout", req.Timeout),
 		wool.Field("extra_args", req.ExtraArgs))
 
+	// Formula-driven path: a per-call TestRequest.formula overrides the
+	// service's configured Test formula. Either runs the EXACT formula (command
+	// + provisioning + output — all DATA, captured by Mind from the project)
+	// instead of detecting a runner. The brain stays framework-blind; this
+	// plugin is the ONLY place the generic provisioning map becomes uv flags.
+	if cmd, output, env, prov, ok := resolveTestFormula(req, s.Base.Service); ok {
+		selectors := append([]string{}, req.Filters...)
+		if req.Target != "" {
+			selectors = append(selectors, req.Target)
+		}
+		fspec := pythonhelpers.SpecFromFormula(cmd, output, env, prov, selectors)
+		s.Wool.Info("running test formula via uv",
+			wool.Field("command", fspec.Command), wool.Field("output", fspec.Output))
+		fStart := time.Now()
+		fRun, fErr := pythonhelpers.RunFormulaStructured(ctx, s.Service.SourceLocation, fspec)
+		if fRun == nil {
+			return s.Runtime.TestError(fErr)
+		}
+		s.Wool.Forwardf("Tests: %s", fRun.LegacyTestSummary().SummaryLine())
+		return fRun.ToProtoResponse("formula", req.Suite, time.Since(fStart)), fErr
+	}
+
 	opts := pythonhelpers.TestOptions{
 		// Stream per-test events through the logger so the CLI TUI shows
 		// live RUN/PASS/FAIL feedback instead of waiting for the summary.
@@ -198,6 +221,20 @@ func (s *Runtime) Build(_ context.Context, _ *runtimev0.BuildRequest) (*runtimev
 
 func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationRequest) (*runtimev0.InformationResponse, error) {
 	return s.Runtime.InformationResponse(ctx, req)
+}
+
+// resolveTestFormula picks the test formula to run: a per-call
+// TestRequest.formula wins, else the service's language-agnostic config formula
+// (resources.Service.Test), else none (ok=false → the agent's default runner).
+// Returns the raw language-agnostic fields; SpecFromFormula does the uv mapping.
+func resolveTestFormula(req *runtimev0.TestRequest, svc *resources.Service) (cmd []string, output string, env, prov map[string]string, ok bool) {
+	if f := req.GetFormula(); f != nil && len(f.GetCommand()) > 0 {
+		return f.GetCommand(), f.GetOutput(), f.GetEnv(), f.GetProvisioning(), true
+	}
+	if svc != nil && svc.Test != nil && len(svc.Test.Command) > 0 {
+		return svc.Test.Command, svc.Test.Output, svc.Test.Env, svc.Test.Provisioning, true
+	}
+	return nil, "", nil, nil, false
 }
 
 func boolToLintState(ok bool) runtimev0.LintStatus_Status {
