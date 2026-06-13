@@ -205,6 +205,18 @@ func NewPythonRepl(ctx context.Context, env runners.RunnerEnvironment) (*PythonR
 		r.mu.Unlock()
 	}()
 
+	// If boot fails below (preamble write / probe / sentinel timeout) we'd
+	// return without stopping the interpreter, leaking the python process AND
+	// the Run goroutine above (and the read goroutine inside readUntilSentinel,
+	// which only unblocks once proc dies). Stop the proc on any non-success
+	// return; disarm once boot succeeds.
+	bootOK := false
+	defer func() {
+		if !bootOK {
+			_ = proc.Stop(context.Background())
+		}
+	}()
+
 	// Feed the preamble + a no-op probe through the same sentinel
 	// machinery. If python or the preamble has a syntax error it'll
 	// surface here as boot failure rather than silently corrupting
@@ -225,6 +237,7 @@ func NewPythonRepl(ctx context.Context, env runners.RunnerEnvironment) (*PythonR
 		return nil, fmt.Errorf("repl preamble boot: %w", err)
 	}
 	r.started = true
+	bootOK = true
 	return r, nil
 }
 
