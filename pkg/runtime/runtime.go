@@ -139,7 +139,7 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	// + provisioning + output — all DATA, captured by Mind from the project)
 	// instead of detecting a runner. The brain stays framework-blind; this
 	// plugin is the ONLY place the generic provisioning map becomes uv flags.
-	if cmd, output, env, prov, ok := resolveTestFormula(req, s.Base.Service); ok {
+	if cmd, output, env, prov, ok := resolveTestFormula(req, s.Base.Service, s.Service.SourceLocation); ok {
 		selectors := append([]string{}, req.Filters...)
 		if req.Target != "" {
 			selectors = append(selectors, req.Target)
@@ -225,14 +225,25 @@ func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationReq
 
 // resolveTestFormula picks the test formula to run: a per-call
 // TestRequest.formula wins, else the service's language-agnostic config formula
-// (resources.Service.Test), else none (ok=false → the agent's default runner).
-// Returns the raw language-agnostic fields; SpecFromFormula does the uv mapping.
-func resolveTestFormula(req *runtimev0.TestRequest, svc *resources.Service) (cmd []string, output string, env, prov map[string]string, ok bool) {
+// (resources.Service.Test), else the formula DERIVED from the project, else none
+// (ok=false → the agent's default runner). Returns the raw language-agnostic
+// fields; SpecFromFormula does the uv mapping.
+func resolveTestFormula(req *runtimev0.TestRequest, svc *resources.Service, sourceDir string) (cmd []string, output string, env, prov map[string]string, ok bool) {
 	if f := req.GetFormula(); f != nil && len(f.GetCommand()) > 0 {
 		return f.GetCommand(), f.GetOutput(), f.GetEnv(), f.GetProvisioning(), true
 	}
 	if svc != nil && svc.Test != nil && len(svc.Test.Command) > 0 {
 		return svc.Test.Command, svc.Test.Output, svc.Test.Env, svc.Test.Provisioning, true
+	}
+	// No explicit (per-call) or configured (service.yaml) formula → DERIVE it from
+	// the project: read its own declarations (tox/Makefile/CI/README) for the
+	// command + its packaging metadata for provisioning (editable, python,
+	// requirements). This is what lets Mind send a formula-less Test and have the
+	// python plugin "just run the project's tests" — no framework knowledge in Mind.
+	if sourceDir != "" {
+		if dcmd, doutput, denv, dprov, dok := pythonhelpers.DeriveFormula(sourceDir); dok {
+			return dcmd, doutput, denv, dprov, true
+		}
 	}
 	return nil, "", nil, nil, false
 }
