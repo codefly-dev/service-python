@@ -68,5 +68,29 @@ func (s *Service) GetAgentInformation(_ context.Context, _ *agentv0.AgentInforma
 		},
 		Protocols: []*agentv0.Protocol{},
 		ReadMe:    "Generic Python service managed by uv. Supports Nix runtime.",
+		// The KNOWLEDGE DUMP: what this plugin can be configured with, so the LLM
+		// (and the tooling inner loop) can produce the RIGHT fix and persist it via
+		// Configure into service.codefly.yaml. These are the test.provisioning knobs
+		// the python runner maps to uv flags (SpecFromFormula).
+		ConfigurationDetails: []*agentv0.ConfigurationValueDetail{{
+			Name:        "test.provisioning",
+			Description: "uv provisioning for the test run. Set these to make a project's tests installable/runnable; the runner maps them to `uv run` flags. Multi-valued fields (with, requirements) are comma-joined.",
+			Fields: []*agentv0.ConfigurationValueInformation{
+				{Name: "python", Description: "CPython version, e.g. \"3.9\" → uv --python."},
+				{Name: "editable", Description: "\"true\" installs the project itself editable → uv --with-editable ."},
+				{Name: "requirements", Description: "Comma-separated requirement files → uv --with-requirements (e.g. \"requirements/tests.txt\")."},
+				{Name: "with", Description: "Comma-separated extra package specs / pins → uv --with (e.g. \"pytest,Werkzeug<3\"). This is where a missing dep or version constraint is added."},
+				{Name: "no_project", Description: "\"true\" runs without the project's own lockfile resolution → uv --no-project."},
+			},
+		}},
+		// LLM-facing remediation technique: how to heal an env-blocked test run by
+		// editing config — the exact loop the tooling inner loop runs.
+		Techniques: []*agentv0.AgentTechnique{{
+			Id:          "heal-test-environment",
+			Name:        "Heal a blocked test environment",
+			Description: "When a test run returns Result.State=ERRORED (env-blocked: missing-dependency / version-conflict / import-error), the tests could not run — it is NOT a test failure. Fix the environment, do not edit the patch.",
+			Tags:        []string{"testing", "provisioning", "remediation"},
+			Prompt:      "The test run was blocked by the environment, not by failing tests. Read the error detail (it names the missing package or version conflict). Add the fix to the service's test.provisioning via Configure: for a missing dependency or version conflict, APPEND the spec to `test.provisioning.with` (e.g. \"Werkzeug<3\"); for missing test deps, add the file to `test.provisioning.requirements`; for a wrong interpreter, set `test.provisioning.python`. Then re-run the tests. Persist only fixes that make the tests execute.",
+		}},
 	}, nil
 }
