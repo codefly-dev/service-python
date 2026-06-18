@@ -12,6 +12,7 @@ import (
 
 	"github.com/codefly-dev/core/agents/services"
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	"github.com/codefly-dev/core/llmout"
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
 	pythonhelpers "github.com/codefly-dev/core/runners/python"
@@ -208,7 +209,7 @@ func (s *Runtime) Lint(ctx context.Context, _ *runtimev0.LintRequest) (*runtimev
 	return &runtimev0.LintResponse{
 		Status: &runtimev0.LintStatus{
 			State:   boolToLintState(err == nil),
-			Message: output,
+			Message: llmout.Compress("ruff", []string{"check"}, output),
 		},
 	}, nil
 }
