@@ -1,6 +1,6 @@
 // Package tooling implements the Tooling gRPC service for the generic
-// Python agent. It delegates to Code for analysis ops and Runtime for
-// test/lint. Specializations typically do NOT override Tooling — their
+// Python agent. It delegates to Code for edits/project metadata and Runtime
+// for test/lint. Specializations typically do NOT override Tooling — their
 // Code/Runtime overrides flow through automatically.
 package tooling
 
@@ -19,14 +19,10 @@ import (
 // Tooling implements the Tooling gRPC service for Python.
 //
 // ARCHITECTURE: Tooling is the primary interface Mind calls for
-// language-specific work. It unifies Code (analysis) and Runtime (test/lint):
-//   - LSP: ListSymbols, FindReferences, GoToDefinition (delegates to Code)
-//   - Analysis: GetProjectInfo (via Code), GetCallGraph (Python AST walker)
+// language-specific commands. It unifies Code and Runtime:
+//   - Analysis: GetProjectInfo (via Code)
 //   - Modification: Fix (ruff), ApplyEdit (via Code)
 //   - Dev: Build, Test (pytest), Lint (ruff) (delegates to Runtime)
-//
-// Mind's ingestion pipeline calls ToolingClient.GetCallGraph() and
-// ToolingClient.FindReferences() via the ToolingCodeClient adapter.
 type Tooling struct {
 	toolingv0.UnimplementedToolingServer
 	Code    *pythoncode.Code
@@ -36,126 +32,6 @@ type Tooling struct {
 // New builds a Tooling server wired to the given Code and Runtime.
 func New(code *pythoncode.Code, rt *pythonruntime.Runtime) *Tooling {
 	return &Tooling{Code: code, Runtime: rt}
-}
-
-// ── LSP Operations ─────────────────────────────────────
-
-func (t *Tooling) ListSymbols(ctx context.Context, req *toolingv0.ListSymbolsRequest) (*toolingv0.ListSymbolsResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_ListSymbols{ListSymbols: &codev0.ListSymbolsRequest{File: req.File}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("tooling list_symbols: %w", err)
-	}
-	ls := resp.GetListSymbols()
-	if ls == nil {
-		return &toolingv0.ListSymbolsResponse{}, nil
-	}
-	return &toolingv0.ListSymbolsResponse{Symbols: codeSymbolsToTooling(ls.Symbols)}, nil
-}
-
-func (t *Tooling) GetDiagnostics(ctx context.Context, req *toolingv0.GetDiagnosticsRequest) (*toolingv0.GetDiagnosticsResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_GetDiagnostics{GetDiagnostics: &codev0.GetDiagnosticsRequest{File: req.File}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("tooling get_diagnostics: %w", err)
-	}
-	gd := resp.GetGetDiagnostics()
-	if gd == nil {
-		return &toolingv0.GetDiagnosticsResponse{}, nil
-	}
-	return &toolingv0.GetDiagnosticsResponse{Diagnostics: codeDiagsToTooling(gd.Diagnostics)}, nil
-}
-
-func (t *Tooling) GoToDefinition(ctx context.Context, req *toolingv0.GoToDefinitionRequest) (*toolingv0.GoToDefinitionResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_GoToDefinition{GoToDefinition: &codev0.GoToDefinitionRequest{
-			File: req.File, Line: req.Line, Column: req.Column,
-		}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("tooling go_to_definition: %w", err)
-	}
-	gtd := resp.GetGoToDefinition()
-	if gtd == nil {
-		return &toolingv0.GoToDefinitionResponse{}, nil
-	}
-	return &toolingv0.GoToDefinitionResponse{Locations: codeLocsToTooling(gtd.Locations)}, nil
-}
-
-func (t *Tooling) FindReferences(ctx context.Context, req *toolingv0.FindReferencesRequest) (*toolingv0.FindReferencesResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_FindReferences{FindReferences: &codev0.FindReferencesRequest{
-			File: req.File, Line: req.Line, Column: req.Column,
-		}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("tooling find_references: %w", err)
-	}
-	fr := resp.GetFindReferences()
-	if fr == nil {
-		return &toolingv0.FindReferencesResponse{}, nil
-	}
-	return &toolingv0.FindReferencesResponse{Locations: codeLocsToTooling(fr.Locations)}, nil
-}
-
-func (t *Tooling) RenameSymbol(ctx context.Context, req *toolingv0.RenameSymbolRequest) (*toolingv0.RenameSymbolResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_RenameSymbol{RenameSymbol: &codev0.RenameSymbolRequest{
-			File: req.File, Line: req.Line, Column: req.Column, NewName: req.NewName,
-		}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("tooling rename_symbol: %w", err)
-	}
-	rs := resp.GetRenameSymbol()
-	if rs == nil {
-		return &toolingv0.RenameSymbolResponse{Success: false, Error: "no response"}, nil
-	}
-	return &toolingv0.RenameSymbolResponse{
-		Success: rs.Success, Error: rs.Error,
-		Edits: codeEditsToTooling(rs.Edits), Files: rs.Files,
-	}, nil
-}
-
-func (t *Tooling) GetHoverInfo(ctx context.Context, req *toolingv0.GetHoverInfoRequest) (*toolingv0.GetHoverInfoResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_GetHoverInfo{GetHoverInfo: &codev0.GetHoverInfoRequest{
-			File: req.File, Line: req.Line, Column: req.Column,
-		}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("tooling get_hover_info: %w", err)
-	}
-	hi := resp.GetGetHoverInfo()
-	if hi == nil {
-		return &toolingv0.GetHoverInfoResponse{}, nil
-	}
-	return &toolingv0.GetHoverInfoResponse{Content: hi.Content, Language: hi.Language}, nil
-}
-
-func (t *Tooling) GetCompletions(ctx context.Context, req *toolingv0.GetCompletionsRequest) (*toolingv0.GetCompletionsResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_GetCompletions{GetCompletions: &codev0.GetCompletionsRequest{
-			File: req.File, Line: req.Line, Column: req.Column,
-		}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("tooling get_completions: %w", err)
-	}
-	gc := resp.GetGetCompletions()
-	if gc == nil {
-		return &toolingv0.GetCompletionsResponse{}, nil
-	}
-	var items []*toolingv0.CompletionItem
-	for _, item := range gc.Items {
-		items = append(items, &toolingv0.CompletionItem{
-			Label: item.Label, Detail: item.Detail,
-			Documentation: item.Documentation, InsertText: item.InsertText,
-		})
-	}
-	return &toolingv0.GetCompletionsResponse{Items: items, IsIncomplete: gc.IsIncomplete}, nil
 }
 
 // ── Code Modification ──────────────────────────────────
@@ -279,29 +155,6 @@ func (t *Tooling) GetProjectInfo(ctx context.Context, _ *toolingv0.GetProjectInf
 	}, nil
 }
 
-func (t *Tooling) GetCallGraph(ctx context.Context, _ *toolingv0.GetCallGraphRequest) (*toolingv0.GetCallGraphResponse, error) {
-	t.Code.EnsureInit()
-	result := t.Code.ComputePythonCallGraph(ctx, t.Code.SourceDir())
-
-	var calls []*toolingv0.CallEdge
-	for _, c := range result.Calls {
-		calls = append(calls, &toolingv0.CallEdge{
-			CallerId: c.CallerID, CalleeId: c.CalleeID,
-			CallType: c.CallType,
-			CallSite: &toolingv0.Location{File: c.File, Line: int32(c.Line)},
-		})
-	}
-	var impls []*toolingv0.ImplementsEdge
-	for _, i := range result.Implements {
-		impls = append(impls, &toolingv0.ImplementsEdge{
-			TypeId: i.TypeID, InterfaceId: i.InterfaceID,
-		})
-	}
-	return &toolingv0.GetCallGraphResponse{
-		Calls: calls, Implements: impls, Error: result.Error,
-	}, nil
-}
-
 // ── Dev Validation (delegates to Runtime) ──────────────
 
 func (t *Tooling) Build(_ context.Context, _ *toolingv0.BuildRequest) (*toolingv0.BuildResponse, error) {
@@ -331,63 +184,4 @@ func (t *Tooling) Lint(ctx context.Context, _ *toolingv0.LintRequest) (*toolingv
 	}
 	success := resp.Status != nil && resp.Status.State == runtimev0.LintStatus_SUCCESS
 	return &toolingv0.LintResponse{Success: success, Output: resp.Output}, nil
-}
-
-// ── Type converters ────────────────────────────────────
-
-func codeSymbolsToTooling(symbols []*codev0.Symbol) []*toolingv0.Symbol {
-	var out []*toolingv0.Symbol
-	for _, s := range symbols {
-		ts := &toolingv0.Symbol{
-			Name: s.Name, Kind: toolingv0.SymbolKind(s.Kind),
-			Signature: s.Signature, Documentation: s.Documentation, Parent: s.Parent,
-			QualifiedName: s.QualifiedName,
-			BodyHash:      s.BodyHash,
-			SignatureHash: s.SignatureHash,
-		}
-		if s.Location != nil {
-			ts.Location = &toolingv0.Location{
-				File: s.Location.File, Line: s.Location.Line, Column: s.Location.Column,
-				EndLine: s.Location.EndLine, EndColumn: s.Location.EndColumn,
-			}
-		}
-		ts.Children = codeSymbolsToTooling(s.Children)
-		out = append(out, ts)
-	}
-	return out
-}
-
-func codeLocsToTooling(locs []*codev0.Location) []*toolingv0.Location {
-	var out []*toolingv0.Location
-	for _, l := range locs {
-		out = append(out, &toolingv0.Location{
-			File: l.File, Line: l.Line, Column: l.Column,
-			EndLine: l.EndLine, EndColumn: l.EndColumn,
-		})
-	}
-	return out
-}
-
-func codeEditsToTooling(edits []*codev0.TextEdit) []*toolingv0.TextEdit {
-	var out []*toolingv0.TextEdit
-	for _, e := range edits {
-		out = append(out, &toolingv0.TextEdit{
-			File: e.File, StartLine: e.StartLine, StartColumn: e.StartColumn,
-			EndLine: e.EndLine, EndColumn: e.EndColumn, NewText: e.NewText,
-		})
-	}
-	return out
-}
-
-func codeDiagsToTooling(diags []*codev0.Diagnostic) []*toolingv0.Diagnostic {
-	var out []*toolingv0.Diagnostic
-	for _, d := range diags {
-		out = append(out, &toolingv0.Diagnostic{
-			File: d.File, Line: d.Line, Column: d.Column,
-			EndLine: d.EndLine, EndColumn: d.EndColumn,
-			Message: d.Message, Severity: toolingv0.DiagnosticSeverity(d.Severity),
-			Source: d.Source, Code: d.Code,
-		})
-	}
-	return out
 }
