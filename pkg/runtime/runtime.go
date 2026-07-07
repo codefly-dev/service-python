@@ -66,7 +66,11 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		s.Service.SourceLocation = wd
 	}
 
-	return s.Runtime.LoadResponse()
+	resp, err := s.Runtime.LoadResponse()
+	if resp != nil && resp.Status != nil {
+		resp.Status.Message = pythonhelpers.AppendRuntimeEvidence(resp.Status.Message, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
+	}
+	return resp, err
 }
 
 // Init runs `uv sync` to materialize the venv. Non-fatal on failure.
@@ -150,11 +154,14 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 			wool.Field("command", fspec.Command), wool.Field("output", fspec.Output))
 		fStart := time.Now()
 		fRun, fErr := pythonhelpers.RunFormulaStructured(ctx, s.Service.SourceLocation, fspec)
+		evidence := pythonhelpers.RuntimeEvidenceForFormula(s.Service.SourceLocation, cmd, output, env, prov, formulaDerivedFromProject(req, s.Base.Service))
 		if fRun == nil {
-			return s.Runtime.TestError(fErr)
+			return s.testErrorWithEvidence(fErr, evidence)
 		}
 		s.Wool.Forwardf("Tests: %s", fRun.LegacyTestSummary().SummaryLine())
-		return fRun.ToProtoResponse("formula", req.Suite, time.Since(fStart)), fErr
+		resp := fRun.ToProtoResponse("formula", req.Suite, time.Since(fStart))
+		appendTestResponseEvidence(resp, evidence)
+		return resp, fErr
 	}
 
 	opts := pythonhelpers.TestOptions{
@@ -195,9 +202,11 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	}
 
 	if run == nil {
-		return s.Runtime.TestError(runErr)
+		return s.testErrorWithEvidence(runErr, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
 	}
-	return run.ToProtoResponse("pytest", req.Suite, duration), runErr
+	resp := run.ToProtoResponse("pytest", req.Suite, duration)
+	appendTestResponseEvidence(resp, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
+	return resp, runErr
 }
 
 // Lint runs ruff via the core python helper.
@@ -229,12 +238,29 @@ func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationReq
 // (resources.Service.Test), else the formula DERIVED from the project, else none
 // (ok=false → the agent's default runner). Returns the raw language-agnostic
 // fields; SpecFromFormula does the uv mapping.
+//
+// A per-call formula with NO command but WITH provisioning/env (a Mind
+// environment heal like {cwd: tests} or {with: Werkzeug<3}) is an OVERLAY: it
+// rides on top of the configured/derived formula instead of being dropped.
+// Mirrors Mind's InProcessRuntime so local == remote — before this, a healed
+// work_dir sent without a command was a silent no-op on the agent path.
 func resolveTestFormula(req *runtimev0.TestRequest, svc *resources.Service, sourceDir string) (cmd []string, output string, env, prov map[string]string, ok bool) {
-	if f := req.GetFormula(); f != nil && len(f.GetCommand()) > 0 {
-		return f.GetCommand(), f.GetOutput(), f.GetEnv(), f.GetProvisioning(), true
+	f := req.GetFormula()
+	if f != nil && len(f.GetCommand()) > 0 {
+		return f.GetCommand(), f.GetOutput(), f.GetEnv(), enrichSuppliedProvisioning(f.GetProvisioning(), sourceDir), true
+	}
+	overlay := func(bcmd []string, boutput string, benv, bprov map[string]string) ([]string, string, map[string]string, map[string]string, bool) {
+		if f != nil {
+			if o := f.GetOutput(); o != "" {
+				boutput = o
+			}
+			benv = overlayStringMap(benv, f.GetEnv())
+			bprov = overlayStringMap(bprov, f.GetProvisioning())
+		}
+		return bcmd, boutput, benv, bprov, true
 	}
 	if svc != nil && svc.Test != nil && len(svc.Test.Command) > 0 {
-		return svc.Test.Command, svc.Test.Output, svc.Test.Env, svc.Test.Provisioning, true
+		return overlay(svc.Test.Command, svc.Test.Output, svc.Test.Env, enrichSuppliedProvisioning(svc.Test.Provisioning, sourceDir))
 	}
 	// No explicit (per-call) or configured (service.yaml) formula → DERIVE it from
 	// the project: read its own declarations (tox/Makefile/CI/README) for the
@@ -243,10 +269,85 @@ func resolveTestFormula(req *runtimev0.TestRequest, svc *resources.Service, sour
 	// python plugin "just run the project's tests" — no framework knowledge in Mind.
 	if sourceDir != "" {
 		if dcmd, doutput, denv, dprov, dok := pythonhelpers.DeriveFormula(sourceDir); dok {
-			return dcmd, doutput, denv, dprov, true
+			return overlay(dcmd, doutput, denv, dprov)
 		}
 	}
 	return nil, "", nil, nil, false
+}
+
+// overlayStringMap returns base with overlay's entries layered on top (overlay
+// wins). Used so a per-call heal (provisioning/env without a command) survives
+// when the command comes from config/derivation. Returns base unchanged when
+// the overlay is empty.
+func overlayStringMap(base, overlay map[string]string) map[string]string {
+	if len(overlay) == 0 {
+		return base
+	}
+	out := make(map[string]string, len(base)+len(overlay))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overlay {
+		out[k] = v
+	}
+	return out
+}
+
+// enrichSuppliedProvisioning delegates to the SHARED core helper
+// (pythonhelpers.EnrichSuppliedProvisioning) so the agent's Test RPC and
+// Mind's in-process runtime resolve identical formulas — the health probe and
+// the task-phase test run must see the same derived editable/python/
+// build-requires under any supplied keys.
+func enrichSuppliedProvisioning(supplied map[string]string, sourceDir string) map[string]string {
+	return pythonhelpers.EnrichSuppliedProvisioning(supplied, sourceDir)
+}
+
+func formulaDerivedFromProject(req *runtimev0.TestRequest, svc *resources.Service) bool {
+	if f := req.GetFormula(); f != nil && len(f.GetCommand()) > 0 {
+		return false
+	}
+	return svc == nil || svc.Test == nil || len(svc.Test.Command) == 0
+}
+
+func (s *Runtime) testErrorWithEvidence(err error, evidence string) (*runtimev0.TestResponse, error) {
+	if err == nil {
+		msg := pythonhelpers.AppendRuntimeEvidence("test runtime errored before tests could execute", evidence)
+		return &runtimev0.TestResponse{
+			Status: &runtimev0.TestStatus{State: runtimev0.TestStatus_ERROR, Message: msg},
+			Result: &runtimev0.TestRunResult{State: runtimev0.TestRunResult_ERRORED, Message: msg},
+			Counts: &runtimev0.TestCounts{},
+		}, nil
+	}
+	resp, testErr := s.Runtime.TestError(err)
+	appendTestResponseErrorEvidence(resp, evidence)
+	return resp, testErr
+}
+
+func appendTestResponseEvidence(resp *runtimev0.TestResponse, evidence string) {
+	if resp == nil || resp.GetResult().GetState() != runtimev0.TestRunResult_ERRORED {
+		return
+	}
+	appendTestResponseErrorEvidence(resp, evidence)
+}
+
+func appendTestResponseErrorEvidence(resp *runtimev0.TestResponse, evidence string) {
+	if resp == nil {
+		return
+	}
+	if resp.Counts == nil {
+		resp.Counts = &runtimev0.TestCounts{}
+	}
+	if resp.Status != nil {
+		resp.Status.Message = pythonhelpers.AppendRuntimeEvidence(resp.Status.Message, evidence)
+	}
+	if resp.Result != nil {
+		resp.Result.Message = pythonhelpers.AppendRuntimeEvidence(resp.Result.Message, evidence)
+	} else {
+		resp.Result = &runtimev0.TestRunResult{
+			State:   runtimev0.TestRunResult_ERRORED,
+			Message: pythonhelpers.AppendRuntimeEvidence("", evidence),
+		}
+	}
 }
 
 func boolToLintState(ok bool) runtimev0.LintStatus_Status {
