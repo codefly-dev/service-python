@@ -33,7 +33,7 @@ import (
 // calling RegisterReplCommands once from their own Load — same pattern
 // go-grpc uses for its explicit registerCommands call.
 type Runtime struct {
-	services.RuntimeServer
+	*services.DefaultRuntime
 	*pythonservice.Service
 
 	// Persistent Python REPL — started lazily on first `exec` command,
@@ -45,7 +45,10 @@ type Runtime struct {
 
 // New builds a generic Python Runtime bound to the shared Service.
 func New(svc *pythonservice.Service) *Runtime {
-	return &Runtime{Service: svc}
+	return &Runtime{
+		DefaultRuntime: services.NewDefaultRuntime(svc.Runtime),
+		Service:        svc,
+	}
 }
 
 // Load reads the agent identity, stores environment, and resolves the
@@ -54,11 +57,7 @@ func New(svc *pythonservice.Service) *Runtime {
 func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtimev0.LoadResponse, error) {
 	defer s.Wool.Catch()
 
-	if err := s.Base.Load(ctx, req.Identity, s.Service.Settings); err != nil {
-		return s.Runtime.LoadErrorf(err, "loading base")
-	}
-
-	s.Runtime.SetEnvironment(req.Environment)
+	response, err := s.Runtime.LoadService(ctx, req, services.RuntimeLoad{Settings: s.Service.Settings})
 
 	// Python convention: source is the service directory itself.
 	s.Service.SourceLocation = s.Location
@@ -66,11 +65,10 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 		s.Service.SourceLocation = wd
 	}
 
-	resp, err := s.Runtime.LoadResponse()
-	if resp != nil && resp.Status != nil {
-		resp.Status.Message = pythonhelpers.AppendRuntimeEvidence(resp.Status.Message, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
+	if response != nil && response.Status != nil {
+		response.Status.Message = pythonhelpers.AppendRuntimeEvidence(response.Status.Message, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
 	}
-	return resp, err
+	return response, err
 }
 
 // Init runs `uv sync` to materialize the venv. Non-fatal on failure.
@@ -227,10 +225,6 @@ func (s *Runtime) Lint(ctx context.Context, _ *runtimev0.LintRequest) (*runtimev
 // Specializations producing artifacts (containers, wheels) override.
 func (s *Runtime) Build(_ context.Context, _ *runtimev0.BuildRequest) (*runtimev0.BuildResponse, error) {
 	return &runtimev0.BuildResponse{}, nil
-}
-
-func (s *Runtime) Information(ctx context.Context, req *runtimev0.InformationRequest) (*runtimev0.InformationResponse, error) {
-	return s.Runtime.InformationResponse(ctx, req)
 }
 
 // resolveTestFormula picks the test formula to run: a per-call
