@@ -10,6 +10,7 @@ import (
 	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
+	pythonrunner "github.com/codefly-dev/core/runners/python"
 )
 
 // Settings is the generic Python agent's configuration block. Specializations
@@ -53,26 +54,22 @@ func New(agent *resources.Agent) *Service {
 // GetAgentInformation returns the generic Python capability advertisement.
 // Specializations SHOULD override this to add protocols/techniques relevant
 // to their layer — call this method from the overriding method if they want
-// to inherit the base languages/runtime requirements.
+// to inherit the base languages/backends and toolchains.
 func (s *Service) GetAgentInformation(_ context.Context, _ *agentv0.AgentInformationRequest) (*agentv0.AgentInformation, error) {
-	return &agentv0.AgentInformation{
-		RuntimeRequirements: []*agentv0.Runtime{
-			{Type: agentv0.Runtime_NIX},
+	return services.Advertisement{
+		Backends: runners.BackendSupport{
+			Local:  pythonrunner.HasUVRuntime,
+			Nix:    true,
+			Docker: true,
 		},
-		Capabilities: []*agentv0.Capability{
-			{Type: agentv0.Capability_BUILDER},
-			{Type: agentv0.Capability_RUNTIME},
-		},
-		Languages: []*agentv0.Language{
-			{Type: agentv0.Language_PYTHON},
-		},
-		Protocols: []*agentv0.Protocol{},
-		ReadMe:    "Generic Python service managed by uv. Supports Nix runtime.",
+		Toolchains: []agentv0.Toolchain_Type{agentv0.Toolchain_PYTHON},
+		Languages:  []agentv0.Language_Type{agentv0.Language_PYTHON},
+		ReadMe:     "Generic Python service managed by uv. Supports Nix runtime.",
 		// The KNOWLEDGE DUMP: what this plugin can be configured with, so the LLM
 		// (and the tooling inner loop) can produce the RIGHT fix and persist it via
 		// Configure into service.codefly.yaml. These are the test.provisioning knobs
 		// the python runner maps to uv flags (SpecFromFormula).
-		ConfigurationDetails: []*agentv0.ConfigurationValueDetail{{
+		Config: []*agentv0.ConfigurationValueDetail{{
 			Name:        "test.provisioning",
 			Description: "uv provisioning for the test run. Set these to make a project's tests installable/runnable; the runner maps them to `uv run` flags. Multi-valued fields (with, requirements) are comma-joined.",
 			Fields: []*agentv0.ConfigurationValueInformation{
@@ -92,5 +89,5 @@ func (s *Service) GetAgentInformation(_ context.Context, _ *agentv0.AgentInforma
 			Tags:        []string{"testing", "provisioning", "remediation"},
 			Prompt:      "The test run was blocked by the environment, not by failing tests. Read the error detail (it names the missing package or version conflict). Add the fix to the service's test.provisioning via Configure: for a missing dependency or version conflict, APPEND the spec to `test.provisioning.with` (e.g. \"Werkzeug<3\"); for missing test deps, add the file to `test.provisioning.requirements`; for a wrong interpreter, set `test.provisioning.python`. Then re-run the tests. Persist only fixes that make the tests execute.",
 		}},
-	}, nil
+	}.Build(), nil
 }
