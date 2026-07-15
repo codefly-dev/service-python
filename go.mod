@@ -5,7 +5,7 @@ go 1.25.0
 toolchain go1.26.4
 
 require (
-	github.com/codefly-dev/core v0.2.17
+	github.com/codefly-dev/core v0.2.18
 	gopkg.in/yaml.v3 v3.0.1
 )
 
