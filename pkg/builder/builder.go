@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/codefly-dev/core/agents/services"
+	"github.com/codefly-dev/core/agents/services/audit"
+	"github.com/codefly-dev/core/agents/services/sbom"
 	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
 	"github.com/codefly-dev/core/resources"
 
@@ -48,6 +50,30 @@ func (s *Builder) Init(ctx context.Context, req *builderv0.InitRequest) (*builde
 	ctx = s.Wool.Inject(ctx)
 	s.DependencyEndpoints = req.DependenciesEndpoints
 	return s.Builder.InitResponse()
+}
+
+// Audit is inherited by Python specializations and fails closed when the
+// canonical scanner is unavailable.
+func (s *Builder) Audit(ctx context.Context, req *builderv0.AuditRequest) (*builderv0.AuditResponse, error) {
+	defer s.Wool.Catch()
+	ctx = s.Wool.Inject(ctx)
+	result, err := audit.Python(ctx, s.Service.SourceLocation, req.GetIncludeOutdated())
+	if err != nil {
+		return s.Builder.AuditError(err)
+	}
+	return s.Builder.AuditResponse(req, result.Findings, result.Outdated, result.Tool, result.Language)
+}
+
+// SBOM delegates frozen Python lock interpretation to uv's CycloneDX 1.5
+// exporter. Specializations only need to set SourceLocation during Load.
+func (s *Builder) SBOM(ctx context.Context, req *builderv0.SBOMRequest) (*builderv0.SBOMResponse, error) {
+	defer s.Wool.Catch()
+	ctx = s.Wool.Inject(ctx)
+	result, err := sbom.Python(ctx, s.Service.SourceLocation, req.GetIncludeDevDependencies())
+	if err != nil {
+		return s.Builder.SBOMError(err)
+	}
+	return s.Builder.SBOMResponse(result.Bom, result.Tool, result.Language, result.SHA256)
 }
 
 // Deploy fails explicitly on the generic layer. Returning a success response
