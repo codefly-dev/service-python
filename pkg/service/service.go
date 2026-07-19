@@ -22,6 +22,14 @@ import (
 //	}
 type Settings struct {
 	PythonVersion string `yaml:"python-version"`
+	SourceDir     string `yaml:"source-dir"`
+}
+
+func (s *Settings) PythonSourceDir() string {
+	if s.SourceDir != "" {
+		return s.SourceDir
+	}
+	return "code"
 }
 
 // Service carries the shared state used by Runtime, Code, Tooling, Builder.

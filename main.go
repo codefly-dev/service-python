@@ -19,6 +19,7 @@ import (
 	"github.com/codefly-dev/core/agents"
 	"github.com/codefly-dev/core/resources"
 	"github.com/codefly-dev/core/shared"
+	"github.com/codefly-dev/core/toolbox/lang"
 
 	pythonbuilder "github.com/codefly-dev/service-python/pkg/builder"
 	pythoncode "github.com/codefly-dev/service-python/pkg/code"
@@ -36,11 +37,13 @@ func main() {
 	svc := pythonservice.New(agent.Of(resources.ServiceAgent))
 	code := pythoncode.New(svc)
 	runtime := pythonruntime.New(svc)
+	tooling := pythontooling.New(code, runtime)
 	agents.Serve(agents.PluginRegistration{
 		Agent:   svc,
 		Runtime: runtime,
 		Builder: pythonbuilder.New(svc),
 		Code:    code,
-		Tooling: pythontooling.New(code, runtime),
+		Tooling: tooling,
+		Toolbox: lang.NewToolboxFromTooling(agent.Name, agent.Version, tooling),
 	})
 }

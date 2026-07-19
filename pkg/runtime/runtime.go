@@ -59,10 +59,18 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 
 	response, err := s.Runtime.LoadService(ctx, req, services.RuntimeLoad{Settings: s.Service.Settings})
 
-	// Python convention: source is the service directory itself.
-	s.Service.SourceLocation = s.Location
+	// Prefer the conventional code/ source tree while retaining root-level
+	// pyproject checkouts. Code, Runtime, and arbitrary-source adapters then
+	// share one source-root contract.
+	root := s.Location
 	if wd := os.Getenv("CODEFLY_AGENT_WORKDIR"); wd != "" {
-		s.Service.SourceLocation = wd
+		root = wd
+	}
+	s.Service.SourceLocation = filepath.Join(root, s.Service.Settings.PythonSourceDir())
+	if _, statErr := os.Stat(filepath.Join(s.Service.SourceLocation, "pyproject.toml")); statErr != nil {
+		if _, rootErr := os.Stat(filepath.Join(root, "pyproject.toml")); rootErr == nil {
+			s.Service.SourceLocation = root
+		}
 	}
 
 	if response != nil && response.Status != nil {
@@ -208,16 +216,21 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 }
 
 // Lint runs ruff via the core python helper.
-func (s *Runtime) Lint(ctx context.Context, _ *runtimev0.LintRequest) (*runtimev0.LintResponse, error) {
+func (s *Runtime) Lint(ctx context.Context, req *runtimev0.LintRequest) (*runtimev0.LintResponse, error) {
 	defer s.Wool.Catch()
+	if req == nil {
+		req = &runtimev0.LintRequest{}
+	}
 
-	output, err := pythonhelpers.RunPythonLint(ctx, s.Service.SourceLocation)
+	output, err := pythonhelpers.RunPythonLint(ctx, s.Service.SourceLocation, req.GetTarget())
+	compressed := llmout.Compress("ruff", []string{"check"}, output)
 
 	return &runtimev0.LintResponse{
 		Status: &runtimev0.LintStatus{
 			State:   boolToLintState(err == nil),
-			Message: llmout.Compress("ruff", []string{"check"}, output),
+			Message: compressed,
 		},
+		Output: compressed,
 	}, nil
 }
 
