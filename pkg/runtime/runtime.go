@@ -5,6 +5,8 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,15 +16,15 @@ import (
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	"github.com/codefly-dev/core/llmout"
 	"github.com/codefly-dev/core/resources"
-	runners "github.com/codefly-dev/core/runners/base"
 	pythonhelpers "github.com/codefly-dev/core/runners/python"
+	selectioncontract "github.com/codefly-dev/core/runners/testselection"
 	"github.com/codefly-dev/core/wool"
 
 	pythonservice "github.com/codefly-dev/service-python/pkg/service"
 )
 
 // Runtime is the generic Python runtime server. Embedded by specializations
-// to inherit uv-based dep sync, pytest, ruff lint, the no-op Build, and
+// to inherit externally provisioned pytest, ruff lint, syntax Build, and
 // the persistent Python REPL commands defined in commands.go.
 //
 // *pythonservice.Service is embedded (not held as a named field) so that
@@ -79,36 +81,13 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 	return response, err
 }
 
-// Init runs `uv sync` to materialize the venv. Non-fatal on failure.
-// Specializations may override to add their own init (e.g. collecting
-// network mappings, wiring env vars) — they should still call this first.
-func (s *Runtime) Init(ctx context.Context, _ *runtimev0.InitRequest) (*runtimev0.InitResponse, error) {
+// Init deliberately does not materialize dependencies in the source checkout.
+// Test formulas provision their environment through uv's external cache, and
+// specializations may create a runner environment without writing .venv or
+// uv.lock into the project. This keeps initialization safe for read-only
+// control-plane operations such as source inspection and linting.
+func (s *Runtime) Init(_ context.Context, _ *runtimev0.InitRequest) (*runtimev0.InitResponse, error) {
 	defer s.Wool.Catch()
-
-	// Route `uv sync` through the plugin's active RunnerEnvironment so
-	// Docker/Nix/native mode stays consistent. Fallback to fresh native
-	// when ActiveEnv is nil (generic Runtime.Init runs before a
-	// specialization has called CreateRunnerEnvironment — rare, but the
-	// fallback keeps the generic path usable standalone).
-	env := s.Service.ActiveEnv
-	if env == nil {
-		native, envErr := runners.NewNativeEnvironment(ctx, s.Service.SourceLocation)
-		if envErr != nil {
-			s.Wool.Warn("uv sync skipped — cannot create runner environment", nil)
-			return s.Runtime.InitResponse()
-		}
-		env = native
-	}
-	proc, procErr := env.NewProcess("uv", "sync")
-	if procErr != nil {
-		s.Wool.Warn("uv sync skipped — cannot create process", nil)
-		return s.Runtime.InitResponse()
-	}
-	proc.WithOutput(s.Logger)
-	if err := proc.Run(ctx); err != nil {
-		s.Wool.Warn("uv sync failed (non-fatal)", nil)
-	}
-
 	return s.Runtime.InitResponse()
 }
 
@@ -129,14 +108,16 @@ func (s *Runtime) Destroy(_ context.Context, _ *runtimev0.DestroyRequest) (*runt
 }
 
 // Test runs pytest via the core python helper and returns the structured
-// summary. Streams per-test events to the logger as they arrive (TUI
-// shows live progress) and persists raw output to <SourceLocation>/.cache/
-// last-test.txt for post-mortem.
+// summary. Streams per-test events to the logger as they arrive (TUI shows live
+// progress). Runtime evidence stays outside the project checkout.
 //
 // Specializations should NOT override this unless their layer has extra
 // setup (e.g. fixtures) beyond what Init already did.
 func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtimev0.TestResponse, error) {
 	defer s.Wool.Catch()
+	if err := selectioncontract.ValidateRequest(req); err != nil {
+		return nil, fmt.Errorf("python runtime: invalid test request: %w", err)
+	}
 
 	s.Wool.Info("running python tests",
 		wool.Field("target", req.Target),
@@ -151,23 +132,34 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	// instead of detecting a runner. The brain stays framework-blind; this
 	// plugin is the ONLY place the generic provisioning map becomes uv flags.
 	if cmd, output, env, prov, ok := resolveTestFormula(req, s.Base.Service, s.Service.SourceLocation); ok {
-		selectors := append([]string{}, req.Filters...)
-		if req.Target != "" {
-			selectors = append(selectors, req.Target)
+		fspec := pythonhelpers.SpecFromFormula(cmd, output, env, prov, nil)
+		selectors, selectorErr := pythonTestRequestSelectors(req, fspec.Command, fspec.Cwd)
+		if selectorErr != nil {
+			return nil, fmt.Errorf("python runtime selection: %w", selectorErr)
 		}
-		fspec := pythonhelpers.SpecFromFormula(cmd, output, env, prov, selectors)
+		fspec.Selectors = selectors
 		s.Wool.Info("running test formula via uv",
 			wool.Field("command", fspec.Command), wool.Field("output", fspec.Output))
 		fStart := time.Now()
 		fRun, fErr := pythonhelpers.RunFormulaStructured(ctx, s.Service.SourceLocation, fspec)
 		evidence := pythonhelpers.RuntimeEvidenceForFormula(s.Service.SourceLocation, cmd, output, env, prov, formulaDerivedFromProject(req, s.Base.Service))
 		if fRun == nil {
-			return s.testErrorWithEvidence(fErr, evidence)
+			resp, rpcErr := s.testErrorWithEvidence(fErr, evidence)
+			ensureTestRun(resp, "formula", req.GetSuite())
+			return acknowledgeTestSelection(req, resp, rpcErr)
 		}
 		s.Wool.Forwardf("Tests: %s", fRun.LegacyTestSummary().SummaryLine())
 		resp := fRun.ToProtoResponse("formula", req.Suite, time.Since(fStart))
 		appendTestResponseEvidence(resp, evidence)
-		return resp, fErr
+		// A normal failing test process exits non-zero. Its structured response
+		// is the operation result, not a gRPC transport error; returning fErr
+		// would make gRPC discard the response and its selection acknowledgement.
+		return acknowledgeTestSelection(req, resp, nil)
+	}
+
+	target, filters, selectorErr := pythonDefaultTestScope(req)
+	if selectorErr != nil {
+		return nil, fmt.Errorf("python runtime selection: %w", selectorErr)
 	}
 
 	opts := pythonhelpers.TestOptions{
@@ -183,12 +175,9 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 				s.Wool.Forwardf("SKIP %s", ev.Test)
 			}
 		},
-		// Persist raw output for post-mortem. Best-effort.
-		CacheDir: filepath.Join(s.Service.SourceLocation, ".cache"),
-
 		// Forward CLI flags to pytest.
-		Target:     req.Target,
-		Filters:    req.Filters,
+		Target:     target,
+		Filters:    filters,
 		Verbose:    req.Verbose,
 		VerboseSet: true,
 		Timeout:    req.Timeout,
@@ -208,10 +197,58 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	}
 
 	if run == nil {
-		return s.testErrorWithEvidence(runErr, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
+		resp, rpcErr := s.testErrorWithEvidence(runErr, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
+		ensureTestRun(resp, "pytest", req.GetSuite())
+		return acknowledgeTestSelection(req, resp, rpcErr)
+	}
+	if runErr != nil && run.LegacyTestSummary().Run == 0 {
+		resp, rpcErr := s.testErrorWithEvidence(runErr, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
+		ensureTestRun(resp, "pytest", req.GetSuite())
+		return acknowledgeTestSelection(req, resp, rpcErr)
 	}
 	resp := run.ToProtoResponse("pytest", req.Suite, duration)
 	appendTestResponseEvidence(resp, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
+	return acknowledgeTestSelection(req, resp, nil)
+}
+
+// pythonTestRequestSelectors translates authoritative typed scope inside the
+// Python plugin. Legacy target/filter requests remain supported for interactive
+// broad runs, but never participate in the typed acknowledgement contract.
+func pythonTestRequestSelectors(req *runtimev0.TestRequest, command []string, cwd string) ([]string, error) {
+	if req.GetSelection() != nil {
+		return pythonhelpers.RenderTestSelection(req.GetSelection(), command, cwd)
+	}
+	selectors := append([]string(nil), req.GetFilters()...)
+	if target := req.GetTarget(); target != "" {
+		selectors = append(selectors, target)
+	}
+	return selectors, nil
+}
+
+func pythonDefaultTestScope(req *runtimev0.TestRequest) (string, []string, error) {
+	if req.GetSelection() == nil {
+		return req.GetTarget(), append([]string(nil), req.GetFilters()...), nil
+	}
+	selectors, err := pythonhelpers.RenderTestSelection(req.GetSelection(), []string{"pytest"}, "")
+	if err != nil {
+		return "", nil, err
+	}
+	if len(selectors) != 1 {
+		return "", nil, fmt.Errorf("typed Python selection rendered %d targets, want exactly one", len(selectors))
+	}
+	return selectors[0], nil, nil
+}
+
+func ensureTestRun(resp *runtimev0.TestResponse, runner, suite string) {
+	if resp != nil && resp.Run == nil {
+		resp.Run = &runtimev0.TestRun{Runner: runner, SuiteName: suite}
+	}
+}
+
+func acknowledgeTestSelection(req *runtimev0.TestRequest, resp *runtimev0.TestResponse, runErr error) (*runtimev0.TestResponse, error) {
+	if ackErr := selectioncontract.Acknowledge(req, resp); ackErr != nil {
+		return resp, errors.Join(runErr, fmt.Errorf("acknowledge typed test selection: %w", ackErr))
+	}
 	return resp, runErr
 }
 
@@ -234,10 +271,17 @@ func (s *Runtime) Lint(ctx context.Context, req *runtimev0.LintRequest) (*runtim
 	}, nil
 }
 
-// Build is a no-op for Python — uv sync handles dep resolution.
-// Specializations producing artifacts (containers, wheels) override.
-func (s *Runtime) Build(_ context.Context, _ *runtimev0.BuildRequest) (*runtimev0.BuildResponse, error) {
-	return &runtimev0.BuildResponse{}, nil
+// Build is Python's read-only compile gate. Packaging remains separate, but a
+// Build RPC must never claim success for syntactically invalid source.
+func (s *Runtime) Build(ctx context.Context, req *runtimev0.BuildRequest) (*runtimev0.BuildResponse, error) {
+	if req == nil {
+		req = &runtimev0.BuildRequest{}
+	}
+	output, err := pythonhelpers.RunPythonBuild(ctx, s.Service.SourceLocation, req.GetTarget())
+	if err != nil {
+		return s.Runtime.BuildErrorf(err, "python compile failed:\n%s", output)
+	}
+	return s.Runtime.BuildResponse(output)
 }
 
 // resolveTestFormula picks the test formula to run: a per-call
