@@ -43,11 +43,10 @@ type Service struct {
 	// Load). Specializations may override at Load time.
 	SourceLocation string
 
-	// ActiveEnv is the plugin's active RunnerEnvironment — set by
-	// Runtime.Init via CreateRunnerEnvironment and consumed by Code /
-	// Tooling so every spawn routes through the same mode (native /
-	// docker / nix). Nil before Runtime.Init — call sites fall back to
-	// a fresh NativeEnvironment for pre-init ops.
+	// ActiveEnv is a specialization's active RunnerEnvironment, consumed by
+	// Code / Tooling so every spawn routes through the same mode (native /
+	// docker / nix). The generic runtime leaves it nil; call sites fall back
+	// to a fresh NativeEnvironment.
 	ActiveEnv runners.RunnerEnvironment
 }
 

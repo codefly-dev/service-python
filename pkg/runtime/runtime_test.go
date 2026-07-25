@@ -1,9 +1,14 @@
 package runtime_test
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
+	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	"github.com/codefly-dev/core/resources"
+	selectioncontract "github.com/codefly-dev/core/runners/testselection"
 
 	pythonruntime "github.com/codefly-dev/service-python/pkg/runtime"
 	pythonservice "github.com/codefly-dev/service-python/pkg/service"
@@ -31,4 +36,61 @@ func TestRuntimeEmbedsService(t *testing.T) {
 	_ = rt.Base     // from services.Base promoted through *pythonservice.Service
 	_ = rt.Settings // from pythonservice.Service
 	_ = rt.Runtime  // from services.RuntimeServer
+}
+
+func TestRuntimeInitDoesNotMutateSourceCheckout(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\nname = \"read-only-init\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	svc.SourceLocation = dir
+	rt := pythonruntime.New(svc)
+	if _, err := rt.Init(context.Background(), &runtimev0.InitRequest{}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	for _, generated := range []string{"uv.lock", ".venv"} {
+		if _, err := os.Stat(filepath.Join(dir, generated)); !os.IsNotExist(err) {
+			t.Fatalf("Init generated %s in source checkout", generated)
+		}
+	}
+}
+
+// TestRuntimeHonorsTypedSelectionWithDefaultRunner locks the remote Python
+// agent to the same contract as Codefly's local library: a markerless Python
+// workspace uses the real default runner, runs only the selected case, and
+// returns the structured acknowledgement even though the selected test fails.
+func TestRuntimeHonorsTypedSelectionWithDefaultRunner(t *testing.T) {
+	dir := t.TempDir()
+	content := "import unittest\n\n\nclass CalculatorTests(unittest.TestCase):\n    def test_selected_failure(self):\n        self.assertEqual(1, 2)\n\n    def test_unselected_pass(self):\n        self.assertEqual(2, 2)\n"
+	if err := os.WriteFile(filepath.Join(dir, "test_calc.py"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	svc.SourceLocation = dir
+	rt := pythonruntime.New(svc)
+	req := &runtimev0.TestRequest{
+		Selection: &runtimev0.TestSelection{Scope: &runtimev0.TestSelection_TestCase{TestCase: &runtimev0.TestCaseSelection{
+			Path:          "test_calc.py",
+			QualifiedName: []string{"CalculatorTests", "test_selected_failure"},
+		}}},
+		SelectionId: "markerless-python-selected-case",
+	}
+	resp, err := rt.Test(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if err := selectioncontract.VerifyAcknowledgement(req, resp); err != nil {
+		t.Fatalf("selection acknowledgement: %v", err)
+	}
+	if resp.GetResult().GetState() != runtimev0.TestRunResult_FAILED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetFailed() != 1 {
+		t.Fatalf("selected result = %s counts=%+v, want only one failing case", resp.GetResult().GetState(), resp.GetCounts())
+	}
+	for _, generated := range []string{"uv.lock", ".venv", ".pytest_cache", "__pycache__", ".cache"} {
+		if _, err := os.Stat(filepath.Join(dir, generated)); !os.IsNotExist(err) {
+			t.Fatalf("Test generated %s in source checkout", generated)
+		}
+	}
 }
