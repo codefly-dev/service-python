@@ -3,6 +3,7 @@ package runtime_test
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -63,6 +64,9 @@ func TestRuntimeInitDoesNotMutateSourceCheckout(t *testing.T) {
 // workspace uses the real default runner, runs only the selected case, and
 // returns the structured acknowledgement even though the selected test fails.
 func TestRuntimeHonorsTypedSelectionWithDefaultRunner(t *testing.T) {
+	if _, err := exec.LookPath("uv"); err != nil {
+		t.Skip("uv is not installed")
+	}
 	dir := t.TempDir()
 	content := "import unittest\n\n\nclass CalculatorTests(unittest.TestCase):\n    def test_selected_failure(self):\n        self.assertEqual(1, 2)\n\n    def test_unselected_pass(self):\n        self.assertEqual(2, 2)\n"
 	if err := os.WriteFile(filepath.Join(dir, "test_calc.py"), []byte(content), 0o644); err != nil {
