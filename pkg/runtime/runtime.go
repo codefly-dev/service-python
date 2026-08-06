@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -148,8 +149,8 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 			ensureTestRun(resp, "formula", req.GetSuite())
 			return acknowledgeTestSelection(req, resp, rpcErr)
 		}
-		s.Wool.Forwardf("Tests: %s", fRun.LegacyTestSummary().SummaryLine())
 		resp := fRun.ToProtoResponse("formula", req.Suite, time.Since(fStart))
+		s.Wool.Forwardf("Tests: %s", testResponseLogSummary(resp))
 		appendTestResponseEvidence(resp, evidence)
 		// A normal failing test process exits non-zero. Its structured response
 		// is the operation result, not a gRPC transport error; returning fErr
@@ -193,7 +194,8 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		// One-line summary in the agent log. Per-failure detail lives
 		// in the structured response — we deliberately do NOT dump
 		// captured_output to the log; that's the size-discipline win.
-		s.Wool.Forwardf("Tests: %s", run.LegacyTestSummary().SummaryLine())
+		resp := run.ToProtoResponse("pytest", req.Suite, duration)
+		s.Wool.Forwardf("Tests: %s", testResponseLogSummary(resp))
 	}
 
 	if run == nil {
@@ -209,6 +211,41 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	resp := run.ToProtoResponse("pytest", req.Suite, duration)
 	appendTestResponseEvidence(resp, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
 	return acknowledgeTestSelection(req, resp, nil)
+}
+
+// testResponseLogSummary renders the structured runtime verdict rather than
+// the legacy case counters alone. Zero-case environment failures and healthy
+// materialization probes both have zero passing tests; logging either as
+// "0 passed" discards the state a developer needs to diagnose the run.
+func testResponseLogSummary(response *runtimev0.TestResponse) string {
+	if response == nil {
+		return "runtime returned no structured test response"
+	}
+	result := response.GetResult()
+	counts := response.GetCounts()
+	message := strings.TrimSpace(result.GetMessage())
+	if result.GetState() == runtimev0.TestRunResult_ERRORED ||
+		result.GetState() == runtimev0.TestRunResult_TIMED_OUT ||
+		counts.GetTotal() == 0 || strings.HasPrefix(message, "env-blocked") {
+		if message != "" {
+			return message
+		}
+		return strings.ToLower(result.GetState().String())
+	}
+	parts := []string{fmt.Sprintf("%d passed", counts.GetPassed())}
+	if counts.GetFailed() > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", counts.GetFailed()))
+	}
+	if counts.GetErrored() > 0 {
+		parts = append(parts, fmt.Sprintf("%d errored", counts.GetErrored()))
+	}
+	if counts.GetSkipped() > 0 {
+		parts = append(parts, fmt.Sprintf("%d skipped", counts.GetSkipped()))
+	}
+	if response.GetCoveragePct() > 0 {
+		parts = append(parts, fmt.Sprintf("%.1f%% coverage", response.GetCoveragePct()))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // pythonTestRequestSelectors translates authoritative typed scope inside the

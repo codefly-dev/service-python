@@ -3,11 +3,37 @@ package runtime
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	"github.com/codefly-dev/core/resources"
+	pythonhelpers "github.com/codefly-dev/core/runners/python"
 )
+
+func TestResponseLogSummaryPreservesStructuredRuntimeState(t *testing.T) {
+	t.Run("environment block", func(t *testing.T) {
+		run := &pythonhelpers.StructuredTestRun{
+			EnvError: &pythonhelpers.RunEnvError{
+				Reason: pythonhelpers.EnvErrorNoTestsExecuted,
+				Detail: "test command executed zero tests",
+			},
+		}
+		got := testResponseLogSummary(run.ToProtoResponse("formula", "", time.Second))
+		if !strings.Contains(got, "env-blocked (no-tests-executed)") || strings.Contains(got, "0 passed") {
+			t.Fatalf("summary = %q, want the typed environment block", got)
+		}
+	})
+
+	t.Run("materialized probe", func(t *testing.T) {
+		run := &pythonhelpers.StructuredTestRun{Materialized: true}
+		got := testResponseLogSummary(run.ToProtoResponse("formula", "", time.Second))
+		if !strings.Contains(got, pythonhelpers.EnvMaterializedMessagePrefix) || strings.Contains(got, "0 passed") {
+			t.Fatalf("summary = %q, want the typed materialization result", got)
+		}
+	})
+}
 
 // TestEnrichSuppliedProvisioning locks the supplied-formula environment
 // contract: the caller owns WHAT to run, the plugin derives the uv
