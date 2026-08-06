@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	"github.com/codefly-dev/core/resources"
@@ -33,6 +34,32 @@ func TestResponseLogSummaryPreservesStructuredRuntimeState(t *testing.T) {
 			t.Fatalf("summary = %q, want the typed materialization result", got)
 		}
 	})
+}
+
+func TestResponseLogSummaryBoundsNativeDiagnosticsButKeepsTerminalCause(t *testing.T) {
+	prefix := "env-blocked (provisioning-failed): editable project install failed\n"
+	terminal := "wcslib_wtbarr_wrap.c:209:3: error: incompatible function pointer types\n2 errors generated\n"
+	diagnostic := prefix + strings.Repeat("compiling café source unit\n", 4_000) + terminal
+	response := &runtimev0.TestResponse{Result: &runtimev0.TestRunResult{
+		State:   runtimev0.TestRunResult_ERRORED,
+		Message: diagnostic,
+	}}
+
+	got := testResponseLogSummary(response)
+	if len(got) > maxTestLogMessageBytes {
+		t.Fatalf("live summary bytes = %d, want <= %d", len(got), maxTestLogMessageBytes)
+	}
+	for _, want := range []string{prefix, "bytes omitted from live log", strings.TrimSpace(terminal)} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("bounded summary omitted %q", want)
+		}
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("bounded summary split a UTF-8 sequence")
+	}
+	if response.GetResult().GetMessage() != diagnostic {
+		t.Fatal("live log projection mutated the typed TestResponse diagnostic")
+	}
 }
 
 // TestEnrichSuppliedProvisioning locks the supplied-formula environment

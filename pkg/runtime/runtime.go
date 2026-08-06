@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/codefly-dev/core/agents/services"
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
@@ -234,7 +235,7 @@ func testResponseLogSummary(response *runtimev0.TestResponse) string {
 		result.GetState() == runtimev0.TestRunResult_TIMED_OUT ||
 		counts.GetTotal() == 0 || strings.HasPrefix(message, "env-blocked") {
 		if message != "" {
-			return message
+			return boundedTestLogMessage(message)
 		}
 		return strings.ToLower(result.GetState().String())
 	}
@@ -252,6 +253,36 @@ func testResponseLogSummary(response *runtimev0.TestResponse) string {
 		parts = append(parts, fmt.Sprintf("%.1f%% coverage", response.GetCoveragePct()))
 	}
 	return strings.Join(parts, ", ")
+}
+
+const (
+	maxTestLogMessageBytes  = 4_096
+	testLogMessageHeadBytes = 1_200
+	testLogMessageTailBytes = 2_600
+)
+
+// boundedTestLogMessage keeps the live operator stream useful during large
+// native build failures. The complete diagnostic remains untouched in the
+// typed TestResponse consumed by Mind; only the redundant Wool projection is
+// bounded. Keeping both the classification/header and the terminal stderr is
+// intentional: compiler and linker causes are normally at the end.
+func boundedTestLogMessage(message string) string {
+	if len(message) <= maxTestLogMessageBytes {
+		return message
+	}
+	headEnd := testLogMessageHeadBytes
+	for headEnd > 0 && !utf8.ValidString(message[:headEnd]) {
+		headEnd--
+	}
+	tailStart := len(message) - testLogMessageTailBytes
+	for tailStart < len(message) && !utf8.RuneStart(message[tailStart]) {
+		tailStart++
+	}
+	omitted := tailStart - headEnd
+	return message[:headEnd] + fmt.Sprintf(
+		"\n... [%d bytes omitted from live log; full diagnostic retained in typed TestResponse] ...\n",
+		omitted,
+	) + message[tailStart:]
 }
 
 // pythonTestRequestSelectors translates authoritative typed scope inside the
