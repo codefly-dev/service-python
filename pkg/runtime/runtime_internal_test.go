@@ -125,6 +125,35 @@ func TestResolveTestFormulaOverlaysCommandlessHealOntoConfiguredFormula(t *testi
 	}
 }
 
+func TestResolveTestFormulaOverlaysCommandlessServiceConfigurationOntoDerivedFormula(t *testing.T) {
+	dir := t.TempDir()
+	workflow := filepath.Join(dir, ".github", "workflows", "test.yml")
+	if err := os.MkdirAll(filepath.Dir(workflow), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workflow, []byte("jobs:\n  test:\n    steps:\n      - run: python -m unittest -v test_environment\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc := &resources.Service{Test: &resources.TestFormula{
+		Env:          map[string]string{"RECOVERY_FLAG": "enabled"},
+		Provisioning: map[string]string{"python": "3.11"},
+	}}
+
+	cmd, output, env, provisioning, ok := resolveTestFormula(&runtimev0.TestRequest{}, svc, dir)
+	if !ok {
+		t.Fatal("resolveTestFormula returned ok=false")
+	}
+	if got := strings.Join(cmd, " "); got != "python -m unittest -v test_environment" {
+		t.Fatalf("derived command = %q", got)
+	}
+	if output != "unittest-text" {
+		t.Fatalf("output = %q", output)
+	}
+	if env["RECOVERY_FLAG"] != "enabled" || provisioning["python"] != "3.11" {
+		t.Fatalf("service recovery overlay missing: env=%v provisioning=%v", env, provisioning)
+	}
+}
+
 func TestResolveTestFormulaOverlaysCommandlessHealOntoDerivedFormula(t *testing.T) {
 	dir := t.TempDir()
 	toxIni := "[tox]\nenvlist = py\n\n[testenv]\ncommands =\n    python -m unittest -v test_sample {posargs}\n"

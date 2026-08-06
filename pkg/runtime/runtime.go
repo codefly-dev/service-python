@@ -7,8 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -65,16 +64,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 	// Prefer the conventional code/ source tree while retaining root-level
 	// pyproject checkouts. Code, Runtime, and arbitrary-source adapters then
 	// share one source-root contract.
-	root := s.Location
-	if wd := os.Getenv("CODEFLY_AGENT_WORKDIR"); wd != "" {
-		root = wd
-	}
-	s.Service.SourceLocation = filepath.Join(root, s.Service.Settings.PythonSourceDir())
-	if _, statErr := os.Stat(filepath.Join(s.Service.SourceLocation, "pyproject.toml")); statErr != nil {
-		if _, rootErr := os.Stat(filepath.Join(root, "pyproject.toml")); rootErr == nil {
-			s.Service.SourceLocation = root
-		}
-	}
+	s.Service.SourceLocation = s.Service.ResolveSourceLocation()
 
 	if response != nil && response.Status != nil {
 		response.Status.Message = pythonhelpers.AppendRuntimeEvidence(response.Status.Message, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
@@ -125,7 +115,9 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		wool.Field("filters", req.Filters),
 		wool.Field("coverage", req.Coverage),
 		wool.Field("timeout", req.Timeout),
-		wool.Field("extra_args", req.ExtraArgs))
+		wool.Field("extra_args", req.ExtraArgs),
+		wool.Field("source_location", s.Service.SourceLocation),
+		wool.Field("configured_env_keys", configuredTestEnvKeys(s.Base.Service)))
 
 	// Formula-driven path: a per-call TestRequest.formula overrides the
 	// service's configured Test formula. Either runs the EXACT formula (command
@@ -157,6 +149,8 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		// would make gRPC discard the response and its selection acknowledgement.
 		return acknowledgeTestSelection(req, resp, nil)
 	}
+	s.Wool.Info("no test formula detected; using the Python default test runner",
+		wool.Field("runtime_evidence", pythonhelpers.RuntimeEvidence(s.Service.SourceLocation)))
 
 	target, filters, selectorErr := pythonDefaultTestScope(req)
 	if selectorErr != nil {
@@ -211,6 +205,18 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	resp := run.ToProtoResponse("pytest", req.Suite, duration)
 	appendTestResponseEvidence(resp, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
 	return acknowledgeTestSelection(req, resp, nil)
+}
+
+func configuredTestEnvKeys(service *resources.Service) []string {
+	if service == nil || service.Test == nil || len(service.Test.Env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(service.Test.Env))
+	for key := range service.Test.Env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // testResponseLogSummary renders the structured runtime verdict rather than
@@ -357,6 +363,17 @@ func resolveTestFormula(req *runtimev0.TestRequest, svc *resources.Service, sour
 	// python plugin "just run the project's tests" — no framework knowledge in Mind.
 	if sourceDir != "" {
 		if dcmd, doutput, denv, dprov, dok := pythonhelpers.DeriveFormula(sourceDir); dok {
+			// A persisted service formula may intentionally contain only an
+			// environment/provisioning repair. Keep the project-derived command,
+			// then layer plugin-owned configuration over it before the per-call
+			// request overlay. Precedence is request > service config > project.
+			if svc != nil && svc.Test != nil {
+				if svc.Test.Output != "" {
+					doutput = svc.Test.Output
+				}
+				denv = overlayStringMap(denv, svc.Test.Env)
+				dprov = overlayStringMap(dprov, svc.Test.Provisioning)
+			}
 			return overlay(dcmd, doutput, denv, dprov)
 		}
 	}

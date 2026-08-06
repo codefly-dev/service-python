@@ -8,6 +8,7 @@ package builder
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/codefly-dev/core/agents/services"
@@ -39,7 +40,7 @@ func New(svc *pythonservice.Service) *Builder {
 func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builderv0.LoadResponse, error) {
 	defer s.Wool.Catch()
 	response, err := s.Builder.LoadService(ctx, req, services.BuilderLoad{Settings: s.Service.Settings})
-	s.Service.SourceLocation = s.Location
+	s.Service.SourceLocation = s.Service.ResolveSourceLocation()
 	return response, err
 }
 
@@ -206,9 +207,25 @@ func renderTestFormula(tf *resources.TestFormula) string {
 	}
 	if len(tf.Provisioning) > 0 {
 		b.WriteString("  provisioning:\n")
-		for k, v := range tf.Provisioning {
+		for _, k := range sortedKeys(tf.Provisioning) {
+			v := tf.Provisioning[k]
 			fmt.Fprintf(&b, "    %s: %s\n", k, v)
 		}
 	}
+	if len(tf.Env) > 0 {
+		b.WriteString("  env:\n")
+		for _, k := range sortedKeys(tf.Env) {
+			fmt.Fprintf(&b, "    %s: %s\n", k, tf.Env[k])
+		}
+	}
 	return b.String()
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
