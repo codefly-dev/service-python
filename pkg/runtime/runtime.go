@@ -7,10 +7,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"maps"
+	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/codefly-dev/core/agents/services"
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
@@ -64,16 +66,7 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 	// Prefer the conventional code/ source tree while retaining root-level
 	// pyproject checkouts. Code, Runtime, and arbitrary-source adapters then
 	// share one source-root contract.
-	root := s.Location
-	if wd := os.Getenv("CODEFLY_AGENT_WORKDIR"); wd != "" {
-		root = wd
-	}
-	s.Service.SourceLocation = filepath.Join(root, s.Service.Settings.PythonSourceDir())
-	if _, statErr := os.Stat(filepath.Join(s.Service.SourceLocation, "pyproject.toml")); statErr != nil {
-		if _, rootErr := os.Stat(filepath.Join(root, "pyproject.toml")); rootErr == nil {
-			s.Service.SourceLocation = root
-		}
-	}
+	s.Service.SourceLocation = s.Service.ResolveSourceLocation()
 
 	if response != nil && response.Status != nil {
 		response.Status.Message = pythonhelpers.AppendRuntimeEvidence(response.Status.Message, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
@@ -124,7 +117,9 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		wool.Field("filters", req.Filters),
 		wool.Field("coverage", req.Coverage),
 		wool.Field("timeout", req.Timeout),
-		wool.Field("extra_args", req.ExtraArgs))
+		wool.Field("extra_args", req.ExtraArgs),
+		wool.Field("source_location", s.Service.SourceLocation),
+		wool.Field("configured_env_keys", configuredTestEnvKeys(s.Base.Service)))
 
 	// Formula-driven path: a per-call TestRequest.formula overrides the
 	// service's configured Test formula. Either runs the EXACT formula (command
@@ -148,14 +143,16 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 			ensureTestRun(resp, "formula", req.GetSuite())
 			return acknowledgeTestSelection(req, resp, rpcErr)
 		}
-		s.Wool.Forwardf("Tests: %s", fRun.LegacyTestSummary().SummaryLine())
 		resp := fRun.ToProtoResponse("formula", req.Suite, time.Since(fStart))
+		s.Wool.Forwardf("Tests: %s", testResponseLogSummary(resp))
 		appendTestResponseEvidence(resp, evidence)
 		// A normal failing test process exits non-zero. Its structured response
 		// is the operation result, not a gRPC transport error; returning fErr
 		// would make gRPC discard the response and its selection acknowledgement.
 		return acknowledgeTestSelection(req, resp, nil)
 	}
+	s.Wool.Info("no test formula detected; using the Python default test runner",
+		wool.Field("runtime_evidence", pythonhelpers.RuntimeEvidence(s.Service.SourceLocation)))
 
 	target, filters, selectorErr := pythonDefaultTestScope(req)
 	if selectorErr != nil {
@@ -189,26 +186,107 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	run, runErr := pythonhelpers.RunPythonTestsStructured(ctx, s.Service.SourceLocation, nil, opts)
 	duration := time.Since(started)
 
-	if run != nil {
-		// One-line summary in the agent log. Per-failure detail lives
-		// in the structured response — we deliberately do NOT dump
-		// captured_output to the log; that's the size-discipline win.
-		s.Wool.Forwardf("Tests: %s", run.LegacyTestSummary().SummaryLine())
-	}
-
 	if run == nil {
 		resp, rpcErr := s.testErrorWithEvidence(runErr, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
 		ensureTestRun(resp, "pytest", req.GetSuite())
 		return acknowledgeTestSelection(req, resp, rpcErr)
 	}
-	if runErr != nil && run.LegacyTestSummary().Run == 0 {
-		resp, rpcErr := s.testErrorWithEvidence(runErr, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
-		ensureTestRun(resp, "pytest", req.GetSuite())
-		return acknowledgeTestSelection(req, resp, rpcErr)
-	}
+
+	// Project the structured run once and reuse it for both the live log line
+	// and the returned response. One-line summary in the agent log: per-failure
+	// detail lives in the structured response — we deliberately do NOT dump
+	// captured_output to the log; that's the size-discipline win.
 	resp := run.ToProtoResponse("pytest", req.Suite, duration)
+	s.Wool.Forwardf("Tests: %s", testResponseLogSummary(resp))
+
+	if runErr != nil && run.LegacyTestSummary().Run == 0 {
+		errResp, rpcErr := s.testErrorWithEvidence(runErr, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
+		ensureTestRun(errResp, "pytest", req.GetSuite())
+		return acknowledgeTestSelection(req, errResp, rpcErr)
+	}
 	appendTestResponseEvidence(resp, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
 	return acknowledgeTestSelection(req, resp, nil)
+}
+
+func configuredTestEnvKeys(service *resources.Service) []string {
+	if service == nil || service.Test == nil || len(service.Test.Env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(service.Test.Env))
+	for key := range service.Test.Env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// testResponseLogSummary renders the structured runtime verdict rather than
+// the legacy case counters alone. Zero-case environment failures and healthy
+// materialization probes both have zero passing tests; logging either as
+// "0 passed" discards the state a developer needs to diagnose the run.
+func testResponseLogSummary(response *runtimev0.TestResponse) string {
+	if response == nil {
+		return "runtime returned no structured test response"
+	}
+	result := response.GetResult()
+	counts := response.GetCounts()
+	message := strings.TrimSpace(result.GetMessage())
+	if result.GetState() == runtimev0.TestRunResult_ERRORED ||
+		result.GetState() == runtimev0.TestRunResult_TIMED_OUT ||
+		counts.GetTotal() == 0 || strings.HasPrefix(message, "env-blocked") {
+		if message != "" {
+			return boundedTestLogMessage(message)
+		}
+		return strings.ToLower(result.GetState().String())
+	}
+	parts := []string{fmt.Sprintf("%d passed", counts.GetPassed())}
+	if counts.GetFailed() > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", counts.GetFailed()))
+	}
+	if counts.GetErrored() > 0 {
+		parts = append(parts, fmt.Sprintf("%d errored", counts.GetErrored()))
+	}
+	if counts.GetSkipped() > 0 {
+		parts = append(parts, fmt.Sprintf("%d skipped", counts.GetSkipped()))
+	}
+	if coverage := response.GetCoverage().GetTotalPct(); coverage > 0 {
+		parts = append(parts, fmt.Sprintf("%.1f%% coverage", coverage))
+	}
+	return strings.Join(parts, ", ")
+}
+
+const (
+	maxTestLogMessageBytes  = 4_096
+	testLogMessageHeadBytes = 1_200
+	testLogMessageTailBytes = 2_600
+)
+
+// boundedTestLogMessage keeps the live operator stream useful during large
+// native build failures. The complete diagnostic remains untouched in the
+// typed TestResponse consumed by Mind; only the redundant Wool projection is
+// bounded. Keeping both the classification/header and the terminal stderr is
+// intentional: compiler and linker causes are normally at the end.
+func boundedTestLogMessage(message string) string {
+	if len(message) <= maxTestLogMessageBytes {
+		return message
+	}
+	headEnd := testLogMessageHeadBytes
+	// Back off only to the nearest rune boundary at the cut point; do NOT
+	// revalidate the whole prefix. Native diagnostics can carry invalid UTF-8
+	// bytes anywhere in the head, and a full-prefix check would drag headEnd
+	// back past them, discarding the classification header we mean to keep.
+	for headEnd > 0 && !utf8.RuneStart(message[headEnd]) {
+		headEnd--
+	}
+	tailStart := len(message) - testLogMessageTailBytes
+	for tailStart < len(message) && !utf8.RuneStart(message[tailStart]) {
+		tailStart++
+	}
+	omitted := tailStart - headEnd
+	return message[:headEnd] + fmt.Sprintf(
+		"\n... [%d bytes omitted from live log; full diagnostic retained in typed TestResponse] ...\n",
+		omitted,
+	) + message[tailStart:]
 }
 
 // pythonTestRequestSelectors translates authoritative typed scope inside the
@@ -320,6 +398,17 @@ func resolveTestFormula(req *runtimev0.TestRequest, svc *resources.Service, sour
 	// python plugin "just run the project's tests" — no framework knowledge in Mind.
 	if sourceDir != "" {
 		if dcmd, doutput, denv, dprov, dok := pythonhelpers.DeriveFormula(sourceDir); dok {
+			// A persisted service formula may intentionally contain only an
+			// environment/provisioning repair. Keep the project-derived command,
+			// then layer plugin-owned configuration over it before the per-call
+			// request overlay. Precedence is request > service config > project.
+			if svc != nil && svc.Test != nil {
+				if svc.Test.Output != "" {
+					doutput = svc.Test.Output
+				}
+				denv = overlayStringMap(denv, svc.Test.Env)
+				dprov = overlayStringMap(dprov, svc.Test.Provisioning)
+			}
 			return overlay(dcmd, doutput, denv, dprov)
 		}
 	}
@@ -335,12 +424,8 @@ func overlayStringMap(base, overlay map[string]string) map[string]string {
 		return base
 	}
 	out := make(map[string]string, len(base)+len(overlay))
-	for k, v := range base {
-		out[k] = v
-	}
-	for k, v := range overlay {
-		out[k] = v
-	}
+	maps.Copy(out, base)
+	maps.Copy(out, overlay)
 	return out
 }
 
@@ -388,6 +473,12 @@ func appendTestResponseErrorEvidence(resp *runtimev0.TestResponse, evidence stri
 	if resp.Counts == nil {
 		resp.Counts = &runtimev0.TestCounts{}
 	}
+	// The legacy TestStatus mirror is deprecated, but core's RuntimeWrapper.TestError
+	// still populates ONLY Status (Result is left nil) — so on the error path this is
+	// the sole carrier of the runner's message. Keep appending evidence here until the
+	// upstream error builder emits the structured Result; dropping it would strip the
+	// diagnostic from that response.
+	//lint:ignore SA1019 legacy error carrier; see comment above
 	if resp.Status != nil {
 		resp.Status.Message = pythonhelpers.AppendRuntimeEvidence(resp.Status.Message, evidence)
 	}

@@ -3,11 +3,106 @@ package runtime
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	"github.com/codefly-dev/core/resources"
+	pythonhelpers "github.com/codefly-dev/core/runners/python"
 )
+
+func TestResponseLogSummaryPreservesStructuredRuntimeState(t *testing.T) {
+	t.Run("environment block", func(t *testing.T) {
+		run := &pythonhelpers.StructuredTestRun{
+			EnvError: &pythonhelpers.RunEnvError{
+				Reason: pythonhelpers.EnvErrorNoTestsExecuted,
+				Detail: "test command executed zero tests",
+			},
+		}
+		got := testResponseLogSummary(run.ToProtoResponse("formula", "", time.Second))
+		if !strings.Contains(got, "env-blocked (no-tests-executed)") || strings.Contains(got, "0 passed") {
+			t.Fatalf("summary = %q, want the typed environment block", got)
+		}
+	})
+
+	t.Run("materialized probe", func(t *testing.T) {
+		run := &pythonhelpers.StructuredTestRun{Materialized: true}
+		got := testResponseLogSummary(run.ToProtoResponse("formula", "", time.Second))
+		if !strings.Contains(got, pythonhelpers.EnvMaterializedMessagePrefix) || strings.Contains(got, "0 passed") {
+			t.Fatalf("summary = %q, want the typed materialization result", got)
+		}
+	})
+
+	// Coverage is rendered from the structured TestCoverage.total_pct field, not
+	// the deprecated flat TestResponse.coverage_pct mirror.
+	t.Run("coverage from structured field", func(t *testing.T) {
+		response := &runtimev0.TestResponse{
+			Result:   &runtimev0.TestRunResult{State: runtimev0.TestRunResult_PASSED},
+			Counts:   &runtimev0.TestCounts{Total: 2, Passed: 2},
+			Coverage: &runtimev0.TestCoverage{TotalPct: 87.5},
+		}
+		got := testResponseLogSummary(response)
+		if got != "2 passed, 87.5% coverage" {
+			t.Fatalf("summary = %q, want %q", got, "2 passed, 87.5% coverage")
+		}
+	})
+}
+
+func TestResponseLogSummaryBoundsNativeDiagnosticsButKeepsTerminalCause(t *testing.T) {
+	prefix := "env-blocked (provisioning-failed): editable project install failed\n"
+	terminal := "wcslib_wtbarr_wrap.c:209:3: error: incompatible function pointer types\n2 errors generated\n"
+	diagnostic := prefix + strings.Repeat("compiling café source unit\n", 4_000) + terminal
+	response := &runtimev0.TestResponse{Result: &runtimev0.TestRunResult{
+		State:   runtimev0.TestRunResult_ERRORED,
+		Message: diagnostic,
+	}}
+
+	got := testResponseLogSummary(response)
+	if len(got) > maxTestLogMessageBytes {
+		t.Fatalf("live summary bytes = %d, want <= %d", len(got), maxTestLogMessageBytes)
+	}
+	for _, want := range []string{prefix, "bytes omitted from live log", strings.TrimSpace(terminal)} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("bounded summary omitted %q", want)
+		}
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("bounded summary split a UTF-8 sequence")
+	}
+	if response.GetResult().GetMessage() != diagnostic {
+		t.Fatal("live log projection mutated the typed TestResponse diagnostic")
+	}
+}
+
+// TestResponseLogSummaryKeepsHeadPastInvalidUTF8 pins that an invalid UTF-8
+// byte in the captured head does not collapse the head back to the cut point.
+// Native compiler/linker stderr is not guaranteed UTF-8; a full-prefix
+// validity check would drag the head boundary back past the invalid byte and
+// discard the head diagnostic the function promises to keep.
+func TestResponseLogSummaryKeepsHeadPastInvalidUTF8(t *testing.T) {
+	prefix := "env-blocked (provisioning-failed): editable project install failed\n"
+	// An invalid byte early in the body, then a marker that lives well inside
+	// the head window but AFTER the invalid byte.
+	headBody := "\xffHEAD_MARKER_KEEP\n"
+	terminal := "ld: symbol(s) not found\n"
+	diagnostic := prefix + headBody + strings.Repeat("x", 6_000) + terminal
+	response := &runtimev0.TestResponse{Result: &runtimev0.TestRunResult{
+		State:   runtimev0.TestRunResult_ERRORED,
+		Message: diagnostic,
+	}}
+
+	got := testResponseLogSummary(response)
+	if len(got) > maxTestLogMessageBytes {
+		t.Fatalf("live summary bytes = %d, want <= %d", len(got), maxTestLogMessageBytes)
+	}
+	for _, want := range []string{prefix, "HEAD_MARKER_KEEP", "bytes omitted from live log", strings.TrimSpace(terminal)} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("bounded summary omitted %q from %q", want, got)
+		}
+	}
+}
 
 // TestEnrichSuppliedProvisioning locks the supplied-formula environment
 // contract: the caller owns WHAT to run, the plugin derives the uv
@@ -96,6 +191,35 @@ func TestResolveTestFormulaOverlaysCommandlessHealOntoConfiguredFormula(t *testi
 	}
 	if env["PYTHONPATH"] != "." || env["KEEP"] != "1" {
 		t.Fatalf("env overlay wrong: %v", env)
+	}
+}
+
+func TestResolveTestFormulaOverlaysCommandlessServiceConfigurationOntoDerivedFormula(t *testing.T) {
+	dir := t.TempDir()
+	workflow := filepath.Join(dir, ".github", "workflows", "test.yml")
+	if err := os.MkdirAll(filepath.Dir(workflow), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workflow, []byte("jobs:\n  test:\n    steps:\n      - name: run tests\n        run: python -m unittest -v test_environment\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc := &resources.Service{Test: &resources.TestFormula{
+		Env:          map[string]string{"RECOVERY_FLAG": "enabled"},
+		Provisioning: map[string]string{"python": "3.11"},
+	}}
+
+	cmd, output, env, provisioning, ok := resolveTestFormula(&runtimev0.TestRequest{}, svc, dir)
+	if !ok {
+		t.Fatal("resolveTestFormula returned ok=false")
+	}
+	if got := strings.Join(cmd, " "); got != "python -m unittest -v test_environment" {
+		t.Fatalf("derived command = %q", got)
+	}
+	if output != "unittest-text" {
+		t.Fatalf("output = %q", output)
+	}
+	if env["RECOVERY_FLAG"] != "enabled" || provisioning["python"] != "3.11" {
+		t.Fatalf("service recovery overlay missing: env=%v provisioning=%v", env, provisioning)
 	}
 }
 
