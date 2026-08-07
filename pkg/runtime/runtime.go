@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -185,25 +186,24 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	run, runErr := pythonhelpers.RunPythonTestsStructured(ctx, s.Service.SourceLocation, nil, opts)
 	duration := time.Since(started)
 
-	if run != nil {
-		// One-line summary in the agent log. Per-failure detail lives
-		// in the structured response — we deliberately do NOT dump
-		// captured_output to the log; that's the size-discipline win.
-		resp := run.ToProtoResponse("pytest", req.Suite, duration)
-		s.Wool.Forwardf("Tests: %s", testResponseLogSummary(resp))
-	}
-
 	if run == nil {
 		resp, rpcErr := s.testErrorWithEvidence(runErr, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
 		ensureTestRun(resp, "pytest", req.GetSuite())
 		return acknowledgeTestSelection(req, resp, rpcErr)
 	}
-	if runErr != nil && run.LegacyTestSummary().Run == 0 {
-		resp, rpcErr := s.testErrorWithEvidence(runErr, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
-		ensureTestRun(resp, "pytest", req.GetSuite())
-		return acknowledgeTestSelection(req, resp, rpcErr)
-	}
+
+	// Project the structured run once and reuse it for both the live log line
+	// and the returned response. One-line summary in the agent log: per-failure
+	// detail lives in the structured response — we deliberately do NOT dump
+	// captured_output to the log; that's the size-discipline win.
 	resp := run.ToProtoResponse("pytest", req.Suite, duration)
+	s.Wool.Forwardf("Tests: %s", testResponseLogSummary(resp))
+
+	if runErr != nil && run.LegacyTestSummary().Run == 0 {
+		errResp, rpcErr := s.testErrorWithEvidence(runErr, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
+		ensureTestRun(errResp, "pytest", req.GetSuite())
+		return acknowledgeTestSelection(req, errResp, rpcErr)
+	}
 	appendTestResponseEvidence(resp, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
 	return acknowledgeTestSelection(req, resp, nil)
 }
@@ -249,8 +249,8 @@ func testResponseLogSummary(response *runtimev0.TestResponse) string {
 	if counts.GetSkipped() > 0 {
 		parts = append(parts, fmt.Sprintf("%d skipped", counts.GetSkipped()))
 	}
-	if response.GetCoveragePct() > 0 {
-		parts = append(parts, fmt.Sprintf("%.1f%% coverage", response.GetCoveragePct()))
+	if coverage := response.GetCoverage().GetTotalPct(); coverage > 0 {
+		parts = append(parts, fmt.Sprintf("%.1f%% coverage", coverage))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -271,7 +271,11 @@ func boundedTestLogMessage(message string) string {
 		return message
 	}
 	headEnd := testLogMessageHeadBytes
-	for headEnd > 0 && !utf8.ValidString(message[:headEnd]) {
+	// Back off only to the nearest rune boundary at the cut point; do NOT
+	// revalidate the whole prefix. Native diagnostics can carry invalid UTF-8
+	// bytes anywhere in the head, and a full-prefix check would drag headEnd
+	// back past them, discarding the classification header we mean to keep.
+	for headEnd > 0 && !utf8.RuneStart(message[headEnd]) {
 		headEnd--
 	}
 	tailStart := len(message) - testLogMessageTailBytes
@@ -420,12 +424,8 @@ func overlayStringMap(base, overlay map[string]string) map[string]string {
 		return base
 	}
 	out := make(map[string]string, len(base)+len(overlay))
-	for k, v := range base {
-		out[k] = v
-	}
-	for k, v := range overlay {
-		out[k] = v
-	}
+	maps.Copy(out, base)
+	maps.Copy(out, overlay)
 	return out
 }
 
@@ -473,6 +473,12 @@ func appendTestResponseErrorEvidence(resp *runtimev0.TestResponse, evidence stri
 	if resp.Counts == nil {
 		resp.Counts = &runtimev0.TestCounts{}
 	}
+	// The legacy TestStatus mirror is deprecated, but core's RuntimeWrapper.TestError
+	// still populates ONLY Status (Result is left nil) — so on the error path this is
+	// the sole carrier of the runner's message. Keep appending evidence here until the
+	// upstream error builder emits the structured Result; dropping it would strip the
+	// diagnostic from that response.
+	//lint:ignore SA1019 legacy error carrier; see comment above
 	if resp.Status != nil {
 		resp.Status.Message = pythonhelpers.AppendRuntimeEvidence(resp.Status.Message, evidence)
 	}

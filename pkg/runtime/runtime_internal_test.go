@@ -34,6 +34,20 @@ func TestResponseLogSummaryPreservesStructuredRuntimeState(t *testing.T) {
 			t.Fatalf("summary = %q, want the typed materialization result", got)
 		}
 	})
+
+	// Coverage is rendered from the structured TestCoverage.total_pct field, not
+	// the deprecated flat TestResponse.coverage_pct mirror.
+	t.Run("coverage from structured field", func(t *testing.T) {
+		response := &runtimev0.TestResponse{
+			Result:   &runtimev0.TestRunResult{State: runtimev0.TestRunResult_PASSED},
+			Counts:   &runtimev0.TestCounts{Total: 2, Passed: 2},
+			Coverage: &runtimev0.TestCoverage{TotalPct: 87.5},
+		}
+		got := testResponseLogSummary(response)
+		if got != "2 passed, 87.5% coverage" {
+			t.Fatalf("summary = %q, want %q", got, "2 passed, 87.5% coverage")
+		}
+	})
 }
 
 func TestResponseLogSummaryBoundsNativeDiagnosticsButKeepsTerminalCause(t *testing.T) {
@@ -59,6 +73,34 @@ func TestResponseLogSummaryBoundsNativeDiagnosticsButKeepsTerminalCause(t *testi
 	}
 	if response.GetResult().GetMessage() != diagnostic {
 		t.Fatal("live log projection mutated the typed TestResponse diagnostic")
+	}
+}
+
+// TestResponseLogSummaryKeepsHeadPastInvalidUTF8 pins that an invalid UTF-8
+// byte in the captured head does not collapse the head back to the cut point.
+// Native compiler/linker stderr is not guaranteed UTF-8; a full-prefix
+// validity check would drag the head boundary back past the invalid byte and
+// discard the head diagnostic the function promises to keep.
+func TestResponseLogSummaryKeepsHeadPastInvalidUTF8(t *testing.T) {
+	prefix := "env-blocked (provisioning-failed): editable project install failed\n"
+	// An invalid byte early in the body, then a marker that lives well inside
+	// the head window but AFTER the invalid byte.
+	headBody := "\xffHEAD_MARKER_KEEP\n"
+	terminal := "ld: symbol(s) not found\n"
+	diagnostic := prefix + headBody + strings.Repeat("x", 6_000) + terminal
+	response := &runtimev0.TestResponse{Result: &runtimev0.TestRunResult{
+		State:   runtimev0.TestRunResult_ERRORED,
+		Message: diagnostic,
+	}}
+
+	got := testResponseLogSummary(response)
+	if len(got) > maxTestLogMessageBytes {
+		t.Fatalf("live summary bytes = %d, want <= %d", len(got), maxTestLogMessageBytes)
+	}
+	for _, want := range []string{prefix, "HEAD_MARKER_KEEP", "bytes omitted from live log", strings.TrimSpace(terminal)} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("bounded summary omitted %q from %q", want, got)
+		}
 	}
 }
 
@@ -158,7 +200,7 @@ func TestResolveTestFormulaOverlaysCommandlessServiceConfigurationOntoDerivedFor
 	if err := os.MkdirAll(filepath.Dir(workflow), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(workflow, []byte("jobs:\n  test:\n    steps:\n      - run: python -m unittest -v test_environment\n"), 0o644); err != nil {
+	if err := os.WriteFile(workflow, []byte("jobs:\n  test:\n    steps:\n      - name: run tests\n        run: python -m unittest -v test_environment\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	svc := &resources.Service{Test: &resources.TestFormula{
