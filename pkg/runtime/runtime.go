@@ -183,7 +183,12 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	}
 
 	started := time.Now()
-	run, runErr := pythonhelpers.RunPythonTestsStructured(ctx, s.Service.SourceLocation, nil, opts)
+	run, runErr := pythonhelpers.RunPythonTestsStructured(
+		ctx,
+		s.Service.SourceLocation,
+		configuredTestEnvironment(s.Base.Service),
+		opts,
+	)
 	duration := time.Since(started)
 
 	if run == nil {
@@ -218,6 +223,22 @@ func configuredTestEnvKeys(service *resources.Service) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// configuredTestEnvironment projects the persisted, plugin-owned test
+// environment into the shared default runner. Formula-driven runs already
+// receive this map through SpecFromFormula; the default runner must honor the
+// same configuration contract instead of silently dropping recovery state.
+func configuredTestEnvironment(service *resources.Service) []*resources.EnvironmentVariable {
+	keys := configuredTestEnvKeys(service)
+	if len(keys) == 0 {
+		return nil
+	}
+	variables := make([]*resources.EnvironmentVariable, 0, len(keys))
+	for _, key := range keys {
+		variables = append(variables, &resources.EnvironmentVariable{Key: key, Value: service.Test.Env[key]})
+	}
+	return variables
 }
 
 // testResponseLogSummary renders the structured runtime verdict rather than
