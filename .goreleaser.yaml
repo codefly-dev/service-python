@@ -1,0 +1,47 @@
+version: 2
+
+project_name: service-python
+
+builds:
+  # ARCHITECTURE: Core's authoritative source inspection uses real
+  # tree-sitter grammars. Agent releases therefore require CGO and the
+  # platform compilers supplied by goreleaser/goreleaser-cross; disabling
+  # CGO would silently make the production parser impossible to ship.
+  - id: darwin-amd64
+    binary: service-python
+    env:
+      - CGO_ENABLED=1
+      - CC=o64-clang
+      - CXX=o64-clang++
+    goos:
+      - darwin
+    goarch:
+      - amd64
+  - id: darwin-arm64
+    binary: service-python
+    env:
+      - CGO_ENABLED=1
+      - CC=oa64-clang
+      - CXX=oa64-clang++
+    goos:
+      - darwin
+    goarch:
+      - arm64
+  - id: linux-amd64
+    binary: service-python
+    env:
+      - CGO_ENABLED=1
+      - CC=x86_64-linux-gnu-gcc
+      - CXX=x86_64-linux-gnu-g++
+    goos:
+      - linux
+    goarch:
+      - amd64
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    # Must match Core's downloader: service-{name}_{version}_{os}_{arch}.tar.gz
+    # (agents/manager/downloader_url.go); the binary inside is service-{name}.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
