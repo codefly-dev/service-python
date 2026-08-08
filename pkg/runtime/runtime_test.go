@@ -65,7 +65,7 @@ func TestRuntimeInitDoesNotMutateSourceCheckout(t *testing.T) {
 // returns the structured acknowledgement even though the selected test fails.
 func TestRuntimeHonorsTypedSelectionWithDefaultRunner(t *testing.T) {
 	if _, err := exec.LookPath("uv"); err != nil {
-		t.Skip("uv is not installed")
+		t.Fatalf("uv is required for the production Python runtime: %v", err)
 	}
 	dir := t.TempDir()
 	content := "import unittest\n\n\nclass CalculatorTests(unittest.TestCase):\n    def test_selected_failure(self):\n        self.assertEqual(1, 2)\n\n    def test_unselected_pass(self):\n        self.assertEqual(2, 2)\n"
@@ -95,6 +95,60 @@ func TestRuntimeHonorsTypedSelectionWithDefaultRunner(t *testing.T) {
 	for _, generated := range []string{"uv.lock", ".venv", ".pytest_cache", "__pycache__", ".cache"} {
 		if _, err := os.Stat(filepath.Join(dir, generated)); !os.IsNotExist(err) {
 			t.Fatalf("Test generated %s in source checkout", generated)
+		}
+	}
+}
+
+// TestRuntimeDefaultRunnerMaterializesDeclaredRequirements proves the remote
+// agent surface, not only Core's helper. The imported package is available
+// exclusively through requirements.txt, so a pytest-only uv overlay must fail
+// and the project-derived provisioning contract must pass.
+func TestRuntimeDefaultRunnerMaterializesDeclaredRequirements(t *testing.T) {
+	if _, err := exec.LookPath("uv"); err != nil {
+		t.Fatalf("uv is required for the production Python runtime: %v", err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "supportdep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("supportdep/pyproject.toml", `[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codefly-agent-declared-probe-dependency"
+version = "0.0.1"
+
+[tool.setuptools]
+py-modules = ["agent_declared_probe_dependency"]
+`)
+	write("supportdep/agent_declared_probe_dependency.py", "VALUE = 'from-agent-declared-requirements'\n")
+	write("requirements.txt", "./supportdep\n")
+	write("test_declared_dependency.py", `import agent_declared_probe_dependency
+
+def test_dependency_was_materialized_from_project_declaration():
+    assert agent_declared_probe_dependency.VALUE == "from-agent-declared-requirements"
+`)
+
+	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	svc.SourceLocation = root
+	rt := pythonruntime.New(svc)
+	resp, err := rt.Test(context.Background(), &runtimev0.TestRequest{})
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+		t.Fatalf("result = %s counts=%+v message=%q, want one passed test", resp.GetResult().GetState(), resp.GetCounts(), resp.GetResult().GetMessage())
+	}
+	for _, generated := range []string{"uv.lock", ".venv", ".pytest_cache", "__pycache__"} {
+		if _, err := os.Stat(filepath.Join(root, generated)); !os.IsNotExist(err) {
+			t.Fatalf("production agent generated %s in source checkout", generated)
 		}
 	}
 }

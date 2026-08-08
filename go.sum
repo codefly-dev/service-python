@@ -41,6 +41,8 @@ github.com/codefly-dev/core v0.2.69 h1:HAtygNa7YdV9zcPG5lwCuRnYKfewTK/qKG2QNJIyO
 github.com/codefly-dev/core v0.2.69/go.mod h1:oP2Ob8tuMJU5wkHN57cR8AcNs6WfkhqmMdTlZLqFipA=
 github.com/codefly-dev/core v0.2.70 h1:cLkadz1SqhCX/6nPES62NDZlxP7fbNYAUxJRR88AZ7Q=
 github.com/codefly-dev/core v0.2.70/go.mod h1:oP2Ob8tuMJU5wkHN57cR8AcNs6WfkhqmMdTlZLqFipA=
+github.com/codefly-dev/core v0.2.71 h1:FyB0WeYKVLDSH+fR9tDLlTjAVxyMZI+Ol0M9wNiD31Y=
+github.com/codefly-dev/core v0.2.71/go.mod h1:oP2Ob8tuMJU5wkHN57cR8AcNs6WfkhqmMdTlZLqFipA=
 github.com/codefly-dev/gortk v0.2.0 h1:7bOlS5valYz2zil+fZctQNcPCYBcPj86abcw9N8h1hQ=
 github.com/codefly-dev/gortk v0.2.0/go.mod h1:dDWUMFgAP063OCGhTEpV7FFUj9+zTcxxO/nV80VKEwg=
 github.com/cyphar/filepath-securejoin v0.6.1 h1:5CeZ1jPXEiYt3+Z6zqprSAgSWiggmpVyciv8syjIpVE=
