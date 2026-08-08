@@ -5,7 +5,7 @@ go 1.25.12
 toolchain go1.26.4
 
 require (
-	github.com/codefly-dev/core v0.2.74
+	github.com/codefly-dev/core v0.2.78
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -82,10 +82,12 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+	github.com/scagogogo/python-requirements-parser v0.0.0-20250717025652-6ca77234c827 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/shirou/gopsutil/v3 v3.24.5 // indirect
 	github.com/shoenig/go-m1cpu v0.2.1 // indirect
 	github.com/skeema/knownhosts v1.3.2 // indirect
+	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82 // indirect
 	github.com/tklauser/go-sysconf v0.3.16 // indirect
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
@@ -101,6 +103,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
+	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.44.0 // indirect

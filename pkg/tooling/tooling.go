@@ -155,9 +155,16 @@ func (t *Tooling) GetProjectInfo(ctx context.Context, _ *toolingv0.GetProjectInf
 	for _, d := range pi.Dependencies {
 		deps = append(deps, &toolingv0.Dependency{Name: d.Name, Version: d.Version, Direct: d.Direct})
 	}
+	var sourceFiles []*toolingv0.SourceFileInfo
+	for _, file := range pi.GetSourceFiles() {
+		sourceFiles = append(sourceFiles, &toolingv0.SourceFileInfo{
+			Path: file.GetPath(), Imports: append([]string(nil), file.GetImports()...),
+		})
+	}
 	return &toolingv0.GetProjectInfoResponse{
 		Module: pi.Module, Language: pi.Language, LanguageVersion: pi.LanguageVersion,
-		Packages: pkgs, Dependencies: deps, FileHashes: pi.FileHashes, Failure: failures.Clone(resp.GetFailure()),
+		Packages: pkgs, Dependencies: deps, FileHashes: pi.FileHashes, SourceFiles: sourceFiles,
+		Failure: failures.Clone(resp.GetFailure()),
 	}, nil
 }
 
