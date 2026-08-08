@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	"github.com/codefly-dev/core/resources"
 	pythonhelpers "github.com/codefly-dev/core/runners/python"
+	pythonservice "github.com/codefly-dev/service-python/pkg/service"
 )
 
 func TestResponseLogSummaryPreservesStructuredRuntimeState(t *testing.T) {
@@ -48,6 +50,26 @@ func TestResponseLogSummaryPreservesStructuredRuntimeState(t *testing.T) {
 			t.Fatalf("summary = %q, want %q", got, "2 passed, 87.5% coverage")
 		}
 	})
+}
+
+func TestFinalizeDefaultTestResponseLogsTheReturnedZeroCaseError(t *testing.T) {
+	service := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	runtime := New(service)
+	response, _ := runtime.finalizeDefaultTestResponse(
+		&runtimev0.TestRequest{},
+		&pythonhelpers.StructuredTestRun{},
+		errors.New("default runner exited before collecting tests"),
+		time.Second,
+		"Python runtime evidence: formula_source: not detected",
+	)
+
+	if response.GetResult().GetState() != runtimev0.TestRunResult_ERRORED {
+		t.Fatalf("final state = %s, want ERRORED", response.GetResult().GetState())
+	}
+	summary := testResponseLogSummary(response)
+	if strings.Contains(summary, "all tests passed") || !strings.Contains(summary, "formula_source: not detected") {
+		t.Fatalf("final log summary = %q, want the returned typed environment evidence", summary)
+	}
 }
 
 func TestResponseLogSummaryBoundsNativeDiagnosticsButKeepsTerminalCause(t *testing.T) {

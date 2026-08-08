@@ -197,19 +197,28 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		return acknowledgeTestSelection(req, resp, rpcErr)
 	}
 
-	// Project the structured run once and reuse it for both the live log line
-	// and the returned response. One-line summary in the agent log: per-failure
-	// detail lives in the structured response — we deliberately do NOT dump
-	// captured_output to the log; that's the size-discipline win.
-	resp := run.ToProtoResponse("pytest", req.Suite, duration)
+	evidence := pythonhelpers.RuntimeEvidence(s.Service.SourceLocation)
+	resp, rpcErr := s.finalizeDefaultTestResponse(req, run, runErr, duration, evidence)
+	// Log only the final response selected for the caller. In particular, a
+	// zero-case runner error must not log the provisional parser default
+	// ("all tests passed") before being classified as an environment error.
 	s.Wool.Forwardf("Tests: %s", testResponseLogSummary(resp))
+	return resp, rpcErr
+}
 
+// finalizeDefaultTestResponse selects the one typed response observed by both
+// the live agent log and the RPC caller. A non-nil runner error with zero
+// executed cases is an execution-environment failure, not the parser's
+// provisional zero-count pass. Ordinary test failures retain their structured
+// suites and remain operation results rather than gRPC transport errors.
+func (s *Runtime) finalizeDefaultTestResponse(req *runtimev0.TestRequest, run *pythonhelpers.StructuredTestRun, runErr error, duration time.Duration, evidence string) (*runtimev0.TestResponse, error) {
 	if runErr != nil && run.LegacyTestSummary().Run == 0 {
-		errResp, rpcErr := s.testErrorWithEvidence(runErr, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
-		ensureTestRun(errResp, "pytest", req.GetSuite())
-		return acknowledgeTestSelection(req, errResp, rpcErr)
+		resp, rpcErr := s.testErrorWithEvidence(runErr, evidence)
+		ensureTestRun(resp, "pytest", req.GetSuite())
+		return acknowledgeTestSelection(req, resp, rpcErr)
 	}
-	appendTestResponseEvidence(resp, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
+	resp := run.ToProtoResponse("pytest", req.GetSuite(), duration)
+	appendTestResponseEvidence(resp, evidence)
 	return acknowledgeTestSelection(req, resp, nil)
 }
 
