@@ -37,8 +37,8 @@ github.com/clipperhouse/uax29/v2 v2.7.0 h1:+gs4oBZ2gPfVrKPthwbMzWZDaAFPGYK72F0NJ
 github.com/clipperhouse/uax29/v2 v2.7.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
 github.com/cloudflare/circl v1.6.3 h1:9GPOhQGF9MCYUeXyMYlqTR6a5gTrgR/fBLXvUgtVcg8=
 github.com/cloudflare/circl v1.6.3/go.mod h1:2eXP6Qfat4O/Yhh8BznvKnJ+uzEoTQ6jVKJRn81BiS4=
-github.com/codefly-dev/core v0.2.66 h1:2QlYE8Iunku0mFt7fqbNETrrM0J4AaK//IVyktwJICw=
-github.com/codefly-dev/core v0.2.66/go.mod h1:Mbq/e8ji6kR3A4cxjz0d22ggdLv6kH6nacVIO/xpxn0=
+github.com/codefly-dev/core v0.2.68 h1:tKQaBHmB3RsFRKH0E390GO+vOQaXe9vIoDu3lMVonfw=
+github.com/codefly-dev/core v0.2.68/go.mod h1:ItIby7dC1aylPFqojcW+mVvncUxk4REQuXG4YRoHYlk=
 github.com/codefly-dev/gortk v0.2.0 h1:7bOlS5valYz2zil+fZctQNcPCYBcPj86abcw9N8h1hQ=
 github.com/codefly-dev/gortk v0.2.0/go.mod h1:dDWUMFgAP063OCGhTEpV7FFUj9+zTcxxO/nV80VKEwg=
 github.com/cyphar/filepath-securejoin v0.6.1 h1:5CeZ1jPXEiYt3+Z6zqprSAgSWiggmpVyciv8syjIpVE=
