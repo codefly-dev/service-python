@@ -1,0 +1,37 @@
+name: GoReleaser
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -v ./...
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # ARCHITECTURE: this maintained cross toolchain supplies the Linux and
+      # macOS compilers required by Core's tree-sitter-backed project
+      # inspection while preserving the GoReleaser artifact contract.
+      - name: Run CGO-capable GoReleaser
+        run: >-
+          docker run --rm
+          -e GITHUB_TOKEN
+          -v "$GITHUB_WORKSPACE:/workspace"
+          -w /workspace
+          ghcr.io/goreleaser/goreleaser-cross:v1.26.4
+          release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
