@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
@@ -92,11 +93,7 @@ func TestRuntimeHonorsTypedSelectionWithDefaultRunner(t *testing.T) {
 	if resp.GetResult().GetState() != runtimev0.TestRunResult_FAILED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetFailed() != 1 {
 		t.Fatalf("selected result = %s counts=%+v, want only one failing case", resp.GetResult().GetState(), resp.GetCounts())
 	}
-	for _, generated := range []string{"uv.lock", ".venv", ".pytest_cache", "__pycache__", ".cache"} {
-		if _, err := os.Stat(filepath.Join(dir, generated)); !os.IsNotExist(err) {
-			t.Fatalf("Test generated %s in source checkout", generated)
-		}
-	}
+	assertRuntimeTestLeftSourceClean(t, dir)
 }
 
 // TestRuntimeDefaultRunnerMaterializesDeclaredRequirements proves the remote
@@ -146,9 +143,29 @@ def test_dependency_was_materialized_from_project_declaration():
 	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
 		t.Fatalf("result = %s counts=%+v message=%q, want one passed test", resp.GetResult().GetState(), resp.GetCounts(), resp.GetResult().GetMessage())
 	}
-	for _, generated := range []string{"uv.lock", ".venv", ".pytest_cache", "__pycache__"} {
+	assertRuntimeTestLeftSourceClean(t, root)
+}
+
+// assertRuntimeTestLeftSourceClean proves the production agent's default Test
+// RPC is observational even when uv invokes a packaging backend for the root
+// project or a local declared dependency.
+func assertRuntimeTestLeftSourceClean(t *testing.T, root string) {
+	t.Helper()
+	for _, generated := range []string{"uv.lock", ".venv", ".pytest_cache", "__pycache__", ".cache"} {
 		if _, err := os.Stat(filepath.Join(root, generated)); !os.IsNotExist(err) {
 			t.Fatalf("production agent generated %s in source checkout", generated)
 		}
+	}
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() && strings.HasSuffix(entry.Name(), ".egg-info") {
+			t.Fatalf("production agent generated package metadata in source checkout: %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("inspect source checkout after agent test: %v", err)
 	}
 }
