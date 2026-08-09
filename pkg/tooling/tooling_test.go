@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	codev0 "github.com/codefly-dev/core/generated/go/codefly/services/code/v0"
 	toolingv0 "github.com/codefly-dev/core/generated/go/codefly/services/tooling/v0"
 	"github.com/codefly-dev/core/resources"
@@ -68,5 +69,12 @@ func TestProjectInfoCarriesRequirementsAndImportsAcrossCodeAndTooling(t *testing
 		len(toolingResponse.GetSourceFiles()) != 1 || toolingResponse.GetSourceFiles()[0].GetPath() != "app.py" ||
 		len(toolingResponse.GetSourceFiles()[0].GetImports()) != 1 || toolingResponse.GetSourceFiles()[0].GetImports()[0] != "flask" {
 		t.Fatalf("tooling project info = %+v", toolingResponse)
+	}
+	semantic, err := pythontooling.New(server, nil).GetSemanticIndex(context.Background(), &toolingv0.GetSemanticIndexRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if semantic.GetFailure() != nil || semantic.GetIndex().GetState() != basev0.SemanticIndexState_SEMANTIC_INDEX_STATE_COMPLETE || len(semantic.GetIndex().GetFiles()) != 1 {
+		t.Fatalf("semantic index = %+v", semantic)
 	}
 }

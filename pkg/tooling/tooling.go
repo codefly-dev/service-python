@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 
+	corecode "github.com/codefly-dev/core/code"
 	"github.com/codefly-dev/core/failures"
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	codev0 "github.com/codefly-dev/core/generated/go/codefly/services/code/v0"
@@ -22,7 +23,7 @@ import (
 //
 // ARCHITECTURE: Tooling is the primary interface Mind calls for
 // language-specific commands. It unifies Code and Runtime:
-//   - Analysis: GetProjectInfo (via Code)
+//   - Analysis: GetProjectInfo + body-free semantic projection (via Code)
 //   - Modification: Fix (ruff), ApplyEdit (via Code)
 //   - Dev: Build, Test (pytest), Lint (ruff) (delegates to Runtime)
 type Tooling struct {
@@ -34,6 +35,12 @@ type Tooling struct {
 // New builds a Tooling server wired to the given Code and Runtime.
 func New(code *pythoncode.Code, rt *pythonruntime.Runtime) *Tooling {
 	return &Tooling{Code: code, Runtime: rt}
+}
+
+// GetSemanticIndex delegates project parsing to the Core Code server embedded
+// by the Python agent; no project bytes cross the Tooling boundary.
+func (t *Tooling) GetSemanticIndex(ctx context.Context, req *toolingv0.GetSemanticIndexRequest) (*toolingv0.GetSemanticIndexResponse, error) {
+	return corecode.NewSourceTooling(t.Code).GetSemanticIndex(ctx, req)
 }
 
 // ── Code Modification ──────────────────────────────────
