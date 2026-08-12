@@ -39,6 +39,8 @@ github.com/cloudflare/circl v1.6.3 h1:9GPOhQGF9MCYUeXyMYlqTR6a5gTrgR/fBLXvUgtVcg
 github.com/cloudflare/circl v1.6.3/go.mod h1:2eXP6Qfat4O/Yhh8BznvKnJ+uzEoTQ6jVKJRn81BiS4=
 github.com/codefly-dev/core v0.2.102 h1:zRhxdF22cjC+qgFZgk9JsRIxCeziz7S2evxL3VkF/7I=
 github.com/codefly-dev/core v0.2.102/go.mod h1:PIAaqnsNqvEO2IhRhgxXKqaxHQ2cwxnWsegABRPvbgM=
+github.com/codefly-dev/core v0.2.111 h1:u3I0+vEi2/Mb1aFSw+i/ZcDT3MBX0qt7L8UK6tlNGug=
+github.com/codefly-dev/core v0.2.111/go.mod h1:e3xNBpBgMOzraxGaFbbiYtMYyhLAEoP7Cy2yaMrvV5U=
 github.com/codefly-dev/gortk v0.2.0 h1:7bOlS5valYz2zil+fZctQNcPCYBcPj86abcw9N8h1hQ=
 github.com/codefly-dev/gortk v0.2.0/go.mod h1:dDWUMFgAP063OCGhTEpV7FFUj9+zTcxxO/nV80VKEwg=
 github.com/cyphar/filepath-securejoin v0.6.1 h1:5CeZ1jPXEiYt3+Z6zqprSAgSWiggmpVyciv8syjIpVE=
