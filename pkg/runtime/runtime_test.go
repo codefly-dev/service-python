@@ -115,7 +115,7 @@ import unittest
 
 names = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
 suite = unittest.defaultTestLoader.loadTestsFromNames(names or ["test_sample"])
-result = unittest.TextTestRunner(verbosity=2).run(suite)
+result = unittest.TextTestRunner().run(suite)
 raise SystemExit(0 if result.wasSuccessful() else 1)
 `
 	cases := `import unittest
@@ -152,6 +152,10 @@ class SampleTests(unittest.TestCase):
 	}
 	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
 		t.Fatalf("selected result = %s counts=%+v message=%q, want only the selected passing case", resp.GetResult().GetState(), resp.GetCounts(), resp.GetResult().GetMessage())
+	}
+	if len(resp.GetSuites()) != 1 || len(resp.GetSuites()[0].GetCases()) != 1 ||
+		resp.GetSuites()[0].GetCases()[0].GetFullName() != "test_sample.SampleTests.test_selected_pass" {
+		t.Fatalf("typed selected cases = %+v, want the exact unittest case identity", resp.GetSuites())
 	}
 	assertRuntimeTestLeftSourceClean(t, root)
 }
