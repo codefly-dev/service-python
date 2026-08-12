@@ -96,6 +96,66 @@ func TestRuntimeHonorsTypedSelectionWithDefaultRunner(t *testing.T) {
 	assertRuntimeTestLeftSourceClean(t, dir)
 }
 
+// TestRuntimeFormulaNormalizesUnittestDisplaySelection proves the production
+// agent boundary accepts the canonical case identity returned by unittest
+// (`method (module.Class)`) and routes it back through a formula that consumes
+// dotted loader names. Result-driven callers must not need Python runner
+// grammar, and an unselected failure makes accidental suite widening visible.
+func TestRuntimeFormulaNormalizesUnittestDisplaySelection(t *testing.T) {
+	if _, err := exec.LookPath("uv"); err != nil {
+		t.Fatalf("uv is required for the production Python runtime: %v", err)
+	}
+	root := t.TempDir()
+	testsDir := filepath.Join(root, "tests")
+	if err := os.MkdirAll(testsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := `import sys
+import unittest
+
+names = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
+suite = unittest.defaultTestLoader.loadTestsFromNames(names or ["test_sample"])
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+raise SystemExit(0 if result.wasSuccessful() else 1)
+`
+	cases := `import unittest
+
+class SampleTests(unittest.TestCase):
+    def test_selected_pass(self):
+        self.assertEqual(2, 2)
+
+    def test_unselected_failure(self):
+        self.assertEqual(1, 2)
+`
+	for path, content := range map[string]string{
+		filepath.Join(testsDir, "runtests.py"):    runner,
+		filepath.Join(testsDir, "test_sample.py"): cases,
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	svc.SourceLocation = root
+	rt := pythonruntime.New(svc)
+	resp, err := rt.Test(context.Background(), &runtimev0.TestRequest{
+		Filters: []string{"test_selected_pass (test_sample.SampleTests)"},
+		Formula: &runtimev0.TestFormula{
+			Command:      []string{"python", "runtests.py"},
+			Output:       "unittest-text",
+			Provisioning: map[string]string{"cwd": "tests"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+		t.Fatalf("selected result = %s counts=%+v message=%q, want only the selected passing case", resp.GetResult().GetState(), resp.GetCounts(), resp.GetResult().GetMessage())
+	}
+	assertRuntimeTestLeftSourceClean(t, root)
+}
+
 // TestRuntimeDefaultRunnerMaterializesDeclaredRequirements proves the remote
 // agent surface, not only Core's helper. The imported package is available
 // exclusively through requirements.txt, so a pytest-only uv overlay must fail
