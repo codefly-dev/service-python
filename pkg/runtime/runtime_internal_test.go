@@ -72,6 +72,56 @@ func TestFinalizeDefaultTestResponseLogsTheReturnedZeroCaseError(t *testing.T) {
 	}
 }
 
+func TestAppendTestResponseEvidenceMakesFailedEnvironmentBlockActionable(t *testing.T) {
+	message := "env-blocked (runtime-data-stale): required runtime data is stale or expired: " +
+		"astropy.utils.exceptions.AstropyWarning: leap-second auto-update failed due to " +
+		"IERSStaleWarning('leap-second file is expired.') (1 test(s) failed)"
+	response := &runtimev0.TestResponse{
+		Result: &runtimev0.TestRunResult{State: runtimev0.TestRunResult_FAILED, Message: message},
+		Counts: &runtimev0.TestCounts{Total: 1, Failed: 1},
+	}
+	evidence := "Python runtime evidence:\n  env:\n    CFLAGS: -Wno-error\n  settable_configuration:\n    test.env.<NAME>: SET a diagnostic-proven environment variable"
+
+	appendTestResponseEvidence(response, evidence)
+
+	got := response.GetResult().GetMessage()
+	for _, want := range []string{
+		message,
+		"Python runtime evidence:",
+		"diagnostic_supported_recovery:",
+		"path: test.env.PYTEST_ADDOPTS",
+		"operation: SET",
+		`value: -W "ignore:leap-second auto-update failed:astropy.utils.exceptions.AstropyWarning"`,
+		"rerun the unchanged requested test scope",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("failed environment block omitted %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestAppendTestResponseEvidenceDoesNotAnnotateCandidateFailure(t *testing.T) {
+	response := &runtimev0.TestResponse{
+		Result: &runtimev0.TestRunResult{State: runtimev0.TestRunResult_FAILED, Message: "AssertionError: wrong value"},
+		Counts: &runtimev0.TestCounts{Total: 1, Failed: 1},
+	}
+	appendTestResponseEvidence(response, "Python runtime evidence: should stay out of candidate failures")
+	if got := response.GetResult().GetMessage(); got != "AssertionError: wrong value" {
+		t.Fatalf("candidate failure was polluted with runtime recovery evidence: %q", got)
+	}
+}
+
+func TestRuntimeEvidenceDiagnosticRecoveryPreservesExistingPytestOptions(t *testing.T) {
+	evidence := "Python runtime evidence:\n  env:\n    PYTEST_ADDOPTS: -x"
+	message := "env-blocked (runtime-data-stale): package.Warning is not a dotted category: " +
+		"astropy.utils.exceptions.AstropyWarning: leap-second auto-update failed due to stale data"
+	got := runtimeEvidenceWithDiagnosticRecovery(evidence, message)
+	want := `value: -x -W "ignore:leap-second auto-update failed:astropy.utils.exceptions.AstropyWarning"`
+	if !strings.Contains(got, want) {
+		t.Fatalf("diagnostic recovery did not preserve existing PYTEST_ADDOPTS; want %q in:\n%s", want, got)
+	}
+}
+
 func TestResponseLogSummaryBoundsNativeDiagnosticsButKeepsTerminalCause(t *testing.T) {
 	prefix := "env-blocked (provisioning-failed): editable project install failed\n"
 	terminal := "wcslib_wtbarr_wrap.c:209:3: error: incompatible function pointer types\n2 errors generated\n"

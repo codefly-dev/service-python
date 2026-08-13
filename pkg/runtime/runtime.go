@@ -594,10 +594,109 @@ func (s *Runtime) testErrorWithEvidence(err error, evidence string) (*runtimev0.
 }
 
 func appendTestResponseEvidence(resp *runtimev0.TestResponse, evidence string) {
-	if resp == nil || resp.GetResult().GetState() != runtimev0.TestRunResult_ERRORED {
+	if resp == nil {
 		return
 	}
+	result := resp.GetResult()
+	if result.GetState() != runtimev0.TestRunResult_ERRORED && !strings.Contains(result.GetMessage(), "env-blocked (") {
+		return
+	}
+	evidence = runtimeEvidenceWithDiagnosticRecovery(evidence, result.GetMessage())
 	appendTestResponseErrorEvidence(resp, evidence)
+}
+
+// runtimeEvidenceWithDiagnosticRecovery turns a plugin-classified runtime
+// block into an exact Configure action when the Python runner owns a safe,
+// narrow repair. Mind remains framework-blind: it receives a dotted path,
+// operation, and value from this plugin instead of inventing pytest flags.
+//
+// Runtime-data failures are warning-as-error verdicts from historical project
+// data (time tables, certificate bundles, schema caches), not candidate-code
+// failures. The runner already proves that every failing case terminates on
+// the same freshness warning before it emits runtime-data-stale. Preserve the
+// project's test scope and source install, and suppress only that diagnosed
+// warning category/message for this runtime environment.
+func runtimeEvidenceWithDiagnosticRecovery(evidence, message string) string {
+	const marker = "env-blocked (runtime-data-stale):"
+	if !strings.Contains(message, marker) || strings.Contains(evidence, "diagnostic_supported_recovery:") {
+		return evidence
+	}
+	category, warningMessage, ok := runtimeDataWarningIdentity(message)
+	if !ok {
+		return evidence
+	}
+	filter := fmt.Sprintf("-W %q", "ignore:"+warningMessage+":"+category)
+	value := filter
+	if current := runtimeEvidenceEnvValue(evidence, "PYTEST_ADDOPTS"); current != "" && !strings.Contains(current, filter) {
+		value = strings.TrimSpace(current + " " + filter)
+	}
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(evidence, "\n"))
+	b.WriteString("\n  diagnostic_supported_recovery:\n")
+	b.WriteString("    reason: runtime-data-stale\n")
+	b.WriteString("    path: test.env.PYTEST_ADDOPTS\n")
+	b.WriteString("    operation: SET\n")
+	b.WriteString("    value: " + value + "\n")
+	b.WriteString("    proof: rerun the unchanged requested test scope; Configure persistence alone is not proof")
+	return b.String()
+}
+
+func runtimeDataWarningIdentity(message string) (category, warningMessage string, ok bool) {
+	parts := strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), ": ")
+	for i := 0; i+1 < len(parts); i++ {
+		candidate := strings.TrimSpace(parts[i])
+		if !validDottedWarningCategory(candidate) {
+			continue
+		}
+		detail := strings.TrimSpace(parts[i+1])
+		if cut, _, found := strings.Cut(detail, " due to "); found {
+			detail = strings.TrimSpace(cut)
+		}
+		if cut, _, found := strings.Cut(detail, "\n"); found {
+			detail = strings.TrimSpace(cut)
+		}
+		if detail == "" || len(detail) > 240 || strings.ContainsAny(detail, ":\r\n\"") {
+			return "", "", false
+		}
+		return candidate, detail, true
+	}
+	return "", "", false
+}
+
+func validDottedWarningCategory(value string) bool {
+	if !strings.HasSuffix(value, "Warning") || !strings.Contains(value, ".") {
+		return false
+	}
+	for _, part := range strings.Split(value, ".") {
+		if part == "" {
+			return false
+		}
+		for i, r := range part {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && r != '_' && (i == 0 || r < '0' || r > '9') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func runtimeEvidenceEnvValue(evidence, key string) string {
+	inEnv := false
+	for _, line := range strings.Split(evidence, "\n") {
+		switch {
+		case line == "  env:":
+			inEnv = true
+			continue
+		case inEnv && !strings.HasPrefix(line, "    "):
+			return ""
+		case inEnv:
+			name, value, found := strings.Cut(strings.TrimSpace(line), ": ")
+			if found && name == key {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
 }
 
 func appendTestResponseErrorEvidence(resp *runtimev0.TestResponse, evidence string) {
