@@ -96,6 +96,55 @@ func TestRuntimeHonorsTypedSelectionWithDefaultRunner(t *testing.T) {
 	assertRuntimeTestLeftSourceClean(t, dir)
 }
 
+// TestRuntimeTypedSelectionReplacesBroadPytestDiscovery proves that the exact
+// semantic selector is the whole collection scope. The project formula is
+// intentionally broad and contains an unrelated collection crash; retaining
+// that operand would produce a false red result even though the selected case
+// passes. Real uv + pytest exercise the production boundary without mocks.
+func TestRuntimeTypedSelectionReplacesBroadPytestDiscovery(t *testing.T) {
+	if _, err := exec.LookPath("uv"); err != nil {
+		t.Fatalf("uv is required for the production Python runtime: %v", err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "broadpkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{
+		"tox.ini": `[testenv]
+commands = pytest --pyargs broadpkg {posargs}
+`,
+		"broadpkg/__init__.py":    "",
+		"broadpkg/test_broken.py": "raise RuntimeError('unselected collection must not run')\n",
+		"test_selected.py":        "def test_selected_pass():\n    assert 2 + 2 == 4\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	svc.SourceLocation = root
+	rt := pythonruntime.New(svc)
+	req := &runtimev0.TestRequest{
+		Selection: &runtimev0.TestSelection{Scope: &runtimev0.TestSelection_TestCase{TestCase: &runtimev0.TestCaseSelection{
+			Path:          "test_selected.py",
+			QualifiedName: []string{"test_selected_pass"},
+		}}},
+		SelectionId: "formula-exact-python-selected-case",
+	}
+	resp, err := rt.Test(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if err := selectioncontract.VerifyAcknowledgement(req, resp); err != nil {
+		t.Fatalf("selection acknowledgement: %v", err)
+	}
+	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+		t.Fatalf("selected result = %s counts=%+v, want only one passing case\n%s", resp.GetResult().GetState(), resp.GetCounts(), resp.GetOutput())
+	}
+	assertRuntimeTestLeftSourceClean(t, root)
+}
+
 // TestRuntimeFormulaNormalizesUnittestDisplaySelection proves the production
 // agent boundary accepts the canonical case identity returned by unittest
 // (`method (module.Class)`) and routes it back through a formula that consumes
