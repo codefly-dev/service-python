@@ -245,6 +245,55 @@ func TestResolveTestFormulaOverlaysCommandlessServiceConfigurationOntoDerivedFor
 	}
 }
 
+// Historical setuptools projects keep test dependencies in setup.cfg while a
+// minimal pyproject.toml names only the build backend. The real agent formula
+// path must preserve Core's metadata-derived focused test extra so Mind does
+// not have to discover each declared dependency through repeated failed probes.
+func TestResolveTestFormulaIncludesSetupCfgTestExtra(t *testing.T) {
+	dir := t.TempDir()
+	toxIni := "[tox]\nenvlist = py\n\n[testenv]\ncommands = pytest {posargs}\n"
+	if err := os.WriteFile(filepath.Join(dir, "tox.ini"), []byte(toxIni), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pyproject := "[build-system]\nrequires = [\"setuptools\"]\nbuild-backend = \"setuptools.build_meta\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte(pyproject), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setupCfg := `[metadata]
+name = historical-project
+
+[options]
+packages = find:
+
+[options.extras_require]
+test =
+    declared-test-tool
+test_all =
+    declared-test-tool
+    unrelated-heavy-tool
+`
+	if err := os.WriteFile(filepath.Join(dir, "setup.cfg"), []byte(setupCfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, output, _, provisioning, ok := resolveTestFormula(&runtimev0.TestRequest{}, nil, dir)
+	if !ok {
+		t.Fatal("resolveTestFormula returned ok=false")
+	}
+	if got := strings.Join(cmd, " "); got != "pytest" {
+		t.Fatalf("derived command = %q", got)
+	}
+	if output != pythonhelpers.OutputJUnitXML {
+		t.Fatalf("output = %q, want %q", output, pythonhelpers.OutputJUnitXML)
+	}
+	if got := provisioning["extras"]; got != "test" {
+		t.Fatalf("derived extras = %q, want focused setup.cfg test extra", got)
+	}
+	if provisioning["persistent_venv"] != "true" {
+		t.Fatalf("setup.cfg test extra must select persistent provisioning: %v", provisioning)
+	}
+}
+
 func TestResolveTestFormulaOverlaysCommandlessHealOntoDerivedFormula(t *testing.T) {
 	dir := t.TempDir()
 	toxIni := "[tox]\nenvlist = py\n\n[testenv]\ncommands =\n    python -m unittest -v test_sample {posargs}\n"
