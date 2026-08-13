@@ -385,13 +385,17 @@ func applyPythonFormulaTestScope(req *runtimev0.TestRequest, spec *pythonhelpers
 	// owns pytest's private distinction between positional collection targets
 	// and -k name expressions.
 	if spec.Output == pythonhelpers.OutputJUnitXML {
-		var exactSelectors, nameFilters []string
+		var exactSelectors, namePatterns []string
 		for _, filter := range req.GetFilters() {
 			if isExactPytestSelector(filter) {
 				exactSelectors = append(exactSelectors, filter)
 			} else if strings.TrimSpace(filter) != "" {
-				nameFilters = append(nameFilters, filter)
+				namePatterns = append(namePatterns, filter)
 			}
+		}
+		nameFilters, err := normalizePytestNameFilters(namePatterns)
+		if err != nil {
+			return err
 		}
 		if target := strings.TrimSpace(req.GetTarget()); target != "" {
 			exactSelectors = append(exactSelectors, target)
@@ -439,7 +443,20 @@ func isExactPytestSelector(value string) bool {
 
 func pythonDefaultTestScope(req *runtimev0.TestRequest) (string, []string, error) {
 	if req.GetSelection() == nil {
-		return req.GetTarget(), append([]string(nil), req.GetFilters()...), nil
+		target := strings.TrimSpace(req.GetTarget())
+		namePatterns := make([]string, 0, len(req.GetFilters()))
+		for _, filter := range req.GetFilters() {
+			if !isExactPytestSelector(filter) {
+				namePatterns = append(namePatterns, filter)
+				continue
+			}
+			if target != "" {
+				return "", nil, fmt.Errorf("Python test request has multiple exact targets %q and %q; use one typed TestSelection", target, filter)
+			}
+			target = strings.TrimSpace(filter)
+		}
+		filters, err := normalizePytestNameFilters(namePatterns)
+		return target, filters, err
 	}
 	selectors, err := pythonhelpers.RenderTestSelection(req.GetSelection(), []string{"pytest"}, "")
 	if err != nil {

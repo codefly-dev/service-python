@@ -265,6 +265,52 @@ def test_unselected_fail():
 	assertRuntimeTestLeftSourceClean(t, root)
 }
 
+// TestRuntimeFormulaRegexAlternationUsesPytestExpression proves the public
+// regex filter contract remains runner-neutral. The Python plugin expands a
+// finite regex alternation into pytest's Boolean name grammar; callers never
+// need to know that pytest rejects the regex `|` operator in `-k`.
+func TestRuntimeFormulaRegexAlternationUsesPytestExpression(t *testing.T) {
+	if _, err := exec.LookPath("uv"); err != nil {
+		t.Fatalf("uv is required for the production Python runtime: %v", err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "broadpkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{
+		"tox.ini": `[testenv]
+commands = pytest --pyargs broadpkg {posargs}
+`,
+		"broadpkg/__init__.py": "",
+		"broadpkg/test_cases.py": `def test_selected_one():
+    assert True
+
+def test_selected_two():
+    assert True
+
+def test_unselected_failure():
+    assert False
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	svc.SourceLocation = root
+	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev0.TestRequest{
+		Filters: []string{`test_selected_one|test_selected_two`},
+	})
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 2 || resp.GetCounts().GetPassed() != 2 {
+		t.Fatalf("regex-filtered result = %s counts=%+v, want two selected passing cases\n%s", resp.GetResult().GetState(), resp.GetCounts(), resp.GetOutput())
+	}
+	assertRuntimeTestLeftSourceClean(t, root)
+}
+
 // TestRuntimeFormulaNormalizesUnittestDisplaySelection proves the production
 // agent boundary accepts the canonical case identity returned by unittest
 // (`method (module.Class)`) and routes it back through a formula that consumes
