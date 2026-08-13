@@ -2,10 +2,12 @@ package service_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
+	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
 	"github.com/codefly-dev/core/resources"
 
 	pythonservice "github.com/codefly-dev/service-python/pkg/service"
@@ -79,5 +81,30 @@ func TestGetAgentInformationGeneric(t *testing.T) {
 	}
 	if len(info.Protocols) != 0 {
 		t.Errorf("generic python should advertise no protocols, got %d", len(info.Protocols))
+	}
+	var provisioning *agentv0.ConfigurationValueDetail
+	for _, detail := range info.GetConfigurationDetails() {
+		if detail.GetName() == "test.provisioning" {
+			provisioning = detail
+			break
+		}
+	}
+	if provisioning == nil {
+		t.Fatal("generic python must advertise test.provisioning configuration")
+	}
+	if !strings.Contains(provisioning.GetDescription(), "UNSET") {
+		t.Fatalf("configuration contract does not advertise reset semantics: %q", provisioning.GetDescription())
+	}
+	fields := map[string]bool{}
+	for _, field := range provisioning.GetFields() {
+		fields[field.GetName()] = true
+	}
+	for _, required := range []string{"editable", "with", "extras", "no_build_isolation", "persistent_venv", "cwd"} {
+		if !fields[required] {
+			t.Errorf("test.provisioning does not advertise supported field %q", required)
+		}
+	}
+	if len(info.Techniques) == 0 || !strings.Contains(info.Techniques[0].GetPrompt(), "UNSET") {
+		t.Fatal("environment-healing technique must teach agents how to restore derived defaults")
 	}
 }
