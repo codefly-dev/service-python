@@ -133,6 +133,16 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		if selectorErr != nil {
 			return nil, fmt.Errorf("python runtime selection: %w", selectorErr)
 		}
+		// A typed selector is authoritative execution scope. Derived pytest
+		// commands may carry broad project discovery operands (for example,
+		// `pytest --pyargs astropy docs {posargs}`). Appending one node ID to
+		// those operands still collects unrelated modules, allowing their
+		// failures to masquerade as the selected case. Keep the real runner
+		// prefix and replace broad pytest discovery before adding the exact
+		// plugin-rendered selector.
+		if req.GetSelection() != nil {
+			fspec.Command = pythonhelpers.CommandForExactSelection(fspec.Command)
+		}
 		fspec.Selectors = selectors
 		s.Wool.Info("running test formula via uv",
 			wool.Field("command", fspec.Command), wool.Field("output", fspec.Output))
