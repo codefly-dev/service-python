@@ -52,6 +52,33 @@ func TestResponseLogSummaryPreservesStructuredRuntimeState(t *testing.T) {
 	})
 }
 
+func TestNormalizePytestNameFiltersExpandsFiniteRegexAlternatives(t *testing.T) {
+	filters, err := normalizePytestNameFilters([]string{
+		`test_gcrs_altaz_bothroutes|test_itrs_to_observed`,
+		`test_case_[ab]`,
+	})
+	if err != nil {
+		t.Fatalf("normalizePytestNameFilters: %v", err)
+	}
+	want := []string{
+		"test_gcrs_altaz_bothroutes",
+		"test_itrs_to_observed",
+		"test_case_a",
+		"test_case_b",
+	}
+	if strings.Join(filters, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("filters = %q, want %q", filters, want)
+	}
+}
+
+func TestNormalizePytestNameFiltersRejectsScopeChangingRegex(t *testing.T) {
+	for _, pattern := range []string{`test_.*`, `^test_exact$`, `test_optional?`} {
+		if _, err := normalizePytestNameFilters([]string{pattern}); err == nil {
+			t.Fatalf("normalizePytestNameFilters(%q) succeeded, want an explicit selection error", pattern)
+		}
+	}
+}
+
 func TestFinalizeDefaultTestResponseLogsTheReturnedZeroCaseError(t *testing.T) {
 	service := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	runtime := New(service)
