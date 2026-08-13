@@ -216,6 +216,32 @@ func TestResolveTestFormulaOverlaysCommandlessHealOntoConfiguredFormula(t *testi
 	}
 }
 
+func TestRuntimeEvidenceNamesPersistedOverridePathsAndResetContract(t *testing.T) {
+	service := &resources.Service{Test: &resources.TestFormula{
+		Provisioning: map[string]string{
+			"editable": "false",
+			"with":     "setuptools<59",
+		},
+		Env: map[string]string{"CFLAGS": "-Wno-error"},
+	}}
+	evidence := runtimeEvidenceWithConfiguredOverrides("Python runtime evidence:\n  language: python", service)
+	for _, want := range []string{
+		"persisted_override_paths",
+		"test.env.CFLAGS",
+		"test.provisioning.editable",
+		"test.provisioning.with",
+		"ConfigChange UNSET",
+		"restore plugin derivation",
+	} {
+		if !strings.Contains(evidence, want) {
+			t.Fatalf("runtime evidence missing %q:\n%s", want, evidence)
+		}
+	}
+	if strings.Index(evidence, "test.env.CFLAGS") > strings.Index(evidence, "test.provisioning.editable") {
+		t.Fatalf("persisted override paths must be deterministic:\n%s", evidence)
+	}
+}
+
 func TestResolveTestFormulaOverlaysCommandlessServiceConfigurationOntoDerivedFormula(t *testing.T) {
 	dir := t.TempDir()
 	workflow := filepath.Join(dir, ".github", "workflows", "test.yml")

@@ -69,7 +69,8 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 	s.Service.SourceLocation = s.Service.ResolveSourceLocation()
 
 	if response != nil && response.Status != nil {
-		response.Status.Message = pythonhelpers.AppendRuntimeEvidence(response.Status.Message, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
+		evidence := runtimeEvidenceWithConfiguredOverrides(pythonhelpers.RuntimeEvidence(s.Service.SourceLocation), s.Base.Service)
+		response.Status.Message = pythonhelpers.AppendRuntimeEvidence(response.Status.Message, evidence)
 	}
 	return response, err
 }
@@ -138,6 +139,7 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 		fStart := time.Now()
 		fRun, fErr := pythonhelpers.RunFormulaStructured(ctx, s.Service.SourceLocation, fspec)
 		evidence := pythonhelpers.RuntimeEvidenceForFormula(s.Service.SourceLocation, cmd, output, env, prov, formulaDerivedFromProject(req, s.Base.Service))
+		evidence = runtimeEvidenceWithConfiguredOverrides(evidence, s.Base.Service)
 		if fRun == nil {
 			resp, rpcErr := s.testErrorWithEvidence(fErr, evidence)
 			ensureTestRun(resp, "formula", req.GetSuite())
@@ -192,12 +194,13 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	duration := time.Since(started)
 
 	if run == nil {
-		resp, rpcErr := s.testErrorWithEvidence(runErr, pythonhelpers.RuntimeEvidence(s.Service.SourceLocation))
+		evidence := runtimeEvidenceWithConfiguredOverrides(pythonhelpers.RuntimeEvidence(s.Service.SourceLocation), s.Base.Service)
+		resp, rpcErr := s.testErrorWithEvidence(runErr, evidence)
 		ensureTestRun(resp, "pytest", req.GetSuite())
 		return acknowledgeTestSelection(req, resp, rpcErr)
 	}
 
-	evidence := pythonhelpers.RuntimeEvidence(s.Service.SourceLocation)
+	evidence := runtimeEvidenceWithConfiguredOverrides(pythonhelpers.RuntimeEvidence(s.Service.SourceLocation), s.Base.Service)
 	resp, rpcErr := s.finalizeDefaultTestResponse(req, run, runErr, duration, evidence)
 	// Log only the final response selected for the caller. In particular, a
 	// zero-case runner error must not log the provisional parser default
@@ -232,6 +235,42 @@ func configuredTestEnvKeys(service *resources.Service) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// runtimeEvidenceWithConfiguredOverrides makes provenance actionable for the
+// environment healer. Effective provisioning alone cannot tell the caller
+// whether a value came from project derivation or from a prior persisted
+// experiment. Naming the explicit paths lets ConfigChange.UNSET restore the
+// plugin-derived baseline instead of accumulating contradictory overrides.
+func runtimeEvidenceWithConfiguredOverrides(evidence string, service *resources.Service) string {
+	if service == nil || service.Test == nil {
+		return evidence
+	}
+	paths := make([]string, 0, 2+len(service.Test.Provisioning)+len(service.Test.Env))
+	if len(service.Test.Command) > 0 {
+		paths = append(paths, "test.command")
+	}
+	if service.Test.Output != "" {
+		paths = append(paths, "test.output")
+	}
+	for key := range service.Test.Provisioning {
+		paths = append(paths, "test.provisioning."+key)
+	}
+	for key := range service.Test.Env {
+		paths = append(paths, "test.env."+key)
+	}
+	if len(paths) == 0 {
+		return evidence
+	}
+	sort.Strings(paths)
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(evidence, "\n"))
+	b.WriteString("\n  persisted_override_paths (take precedence over project-derived defaults):\n")
+	for _, path := range paths {
+		b.WriteString("    - " + path + "\n")
+	}
+	b.WriteString("  override_reset: apply ConfigChange UNSET to a persisted path to restore plugin derivation")
+	return b.String()
 }
 
 // configuredTestEnvironment projects the persisted, plugin-owned test
