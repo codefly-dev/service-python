@@ -104,7 +104,12 @@ func TestGetAgentInformationGeneric(t *testing.T) {
 			t.Errorf("test.provisioning does not advertise supported field %q", required)
 		}
 	}
-	if len(info.Techniques) == 0 || !strings.Contains(info.Techniques[0].GetPrompt(), "UNSET") {
-		t.Fatal("environment-healing technique must teach agents how to restore derived defaults")
+	if len(info.Techniques) == 0 {
+		t.Fatal("environment-healing technique is missing")
+	}
+	for _, required := range []string{"no_build_isolation=true", "preserve the editable source install", "requirement FILE paths only", "Never put paths or placeholders in `with`", "UNSET"} {
+		if !strings.Contains(info.Techniques[0].GetPrompt(), required) {
+			t.Errorf("environment-healing technique missing %q: %s", required, info.Techniques[0].GetPrompt())
+		}
 	}
 }

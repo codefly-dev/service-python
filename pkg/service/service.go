@@ -103,14 +103,14 @@ func (s *Service) GetAgentInformation(_ context.Context, _ *agentv0.AgentInforma
 			Description: "uv provisioning for the test run. SET/APPEND explicit overrides to make a project's tests installable/runnable; UNSET a persisted path to restore the value derived from project declarations. Multi-valued fields (with, requirements, dependency_groups, extras) are comma-joined.",
 			Fields: []*agentv0.ConfigurationValueInformation{
 				{Name: "python", Description: "CPython version, e.g. \"3.9\" → uv --python."},
-				{Name: "editable", Description: "\"true\" installs the project itself editable → uv --with-editable ."},
+				{Name: "editable", Description: "\"true\" installs the code-unit root editable → uv --with-editable; \"false\" deliberately omits that source install and is not a build-failure workaround."},
 				{Name: "requirements", Description: "Comma-separated requirement files → uv --with-requirements (e.g. \"requirements/tests.txt\")."},
 				{Name: "with", Description: "Comma-separated extra package specs / pins → uv --with (e.g. \"pytest,Werkzeug<3\"). This is where a missing dep or version constraint is added."},
 				{Name: "no_project", Description: "\"true\" runs without the project's own lockfile resolution → uv --no-project."},
 				{Name: "exclude_newer", Description: "Upper publication-time bound for dependency resolution → uv --exclude-newer."},
 				{Name: "dependency_groups", Description: "Comma-separated PEP 735 dependency groups → uv --group."},
 				{Name: "extras", Description: "Comma-separated project extras installed by the persistent editable environment."},
-				{Name: "no_build_isolation", Description: "\"true\" disables PEP 517 build isolation after the plugin materializes declared build requirements."},
+				{Name: "no_build_isolation", Description: "\"true\" repairs an editable PEP 517 build that cannot import its declared build backend/requirements; the plugin materializes those declared build requirements."},
 				{Name: "persistent_venv", Description: "\"true\" provisions and reuses the plugin-owned test environment."},
 				{Name: "cwd", Description: "Test working directory relative to the code-unit root."},
 			},
@@ -125,7 +125,7 @@ func (s *Service) GetAgentInformation(_ context.Context, _ *agentv0.AgentInforma
 			Name:        "Heal a blocked test environment",
 			Description: "When a test run returns Result.State=ERRORED (env-blocked: missing-dependency / version-conflict / import-error), the tests could not run — it is NOT a test failure. Fix the environment, do not edit the patch.",
 			Tags:        []string{"testing", "provisioning", "remediation"},
-			Prompt:      "The test run was blocked by the environment, not by failing tests. Read the error detail and use Configure on the smallest relevant plugin-owned setting: for a missing dependency or version conflict, APPEND the spec to `test.provisioning.with` (e.g. \"Werkzeug<3\"); for missing test deps, add the file to `test.provisioning.requirements`; for a wrong interpreter, SET `test.provisioning.python`; for a diagnostic that names a required environment/compiler setting, SET `test.env.<NAME>`. If an earlier persisted experiment now conflicts with runtime evidence, UNSET that exact path to restore the project-derived default. Then re-run the tests. Persist only fixes that make the tests execute.",
+			Prompt:      "The test run was blocked by the environment, not by failing tests. Read the error detail and use Configure on the smallest relevant plugin-owned setting: if an editable PEP 517 build cannot import its declared build backend or requirements, SET `test.provisioning.no_build_isolation=true` and preserve the editable source install; for a missing dependency or version conflict, APPEND exactly one package requirement spec to `test.provisioning.with` (e.g. \"Werkzeug<3\"); `test.provisioning.requirements` accepts existing requirement FILE paths only; for a wrong interpreter, SET `test.provisioning.python`; for a diagnostic that names a required environment/compiler setting, SET `test.env.<NAME>`. Never put paths or placeholders in `with`, never put package specs in `requirements`, and never disable the source install merely to bypass its build. If an earlier persisted experiment now conflicts with runtime evidence, UNSET that exact path to restore the project-derived default. Then re-run the tests. Persist only fixes that make the tests execute.",
 		}},
 	}.Build(), nil
 }

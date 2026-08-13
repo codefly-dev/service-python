@@ -124,7 +124,7 @@ func (s *Builder) Configure(ctx context.Context, req *builderv0.ConfigureRequest
 		candidate = &resources.TestFormula{}
 	}
 	for _, c := range req.GetChanges() {
-		if err := applyConfigChange(candidate, c); err != nil {
+		if err := applyConfigChange(s.Service.SourceLocation, candidate, c); err != nil {
 			return configureError(err.Error()), nil
 		}
 	}
@@ -161,7 +161,7 @@ func configureError(msg string) *builderv0.ConfigureResponse {
 //	test.env.<key>           SET or UNSET
 //
 // Unknown paths are rejected — the plugin only configures what it documents.
-func applyConfigChange(tf *resources.TestFormula, c *builderv0.ConfigChange) error {
+func applyConfigChange(sourceRoot string, tf *resources.TestFormula, c *builderv0.ConfigChange) error {
 	if tf == nil {
 		return fmt.Errorf("test formula is nil")
 	}
@@ -174,6 +174,9 @@ func applyConfigChange(tf *resources.TestFormula, c *builderv0.ConfigChange) err
 		key := strings.TrimPrefix(path, "test.provisioning.")
 		if key == "" {
 			return fmt.Errorf("empty provisioning key in path %q", path)
+		}
+		if err := validateProvisioningChange(sourceRoot, key, c); err != nil {
+			return err
 		}
 		switch c.GetOp() {
 		case builderv0.ConfigChange_SET:
