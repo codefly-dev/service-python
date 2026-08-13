@@ -8,19 +8,15 @@ package builder
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/agents/services/audit"
 	"github.com/codefly-dev/core/agents/services/sbom"
 	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
 	"github.com/codefly-dev/core/resources"
-	piprequirements "github.com/scagogogo/python-requirements-parser/pkg/parser"
 
 	pythonservice "github.com/codefly-dev/service-python/pkg/service"
 )
@@ -240,152 +236,6 @@ func applyConfigChange(sourceRoot string, tf *resources.TestFormula, c *builderv
 		}
 	default:
 		return fmt.Errorf("unsupported config path %q (see GetAgentInformation configuration_details)", path)
-	}
-	return nil
-}
-
-// validateProvisioningChange enforces the value semantics advertised by the
-// Python agent. The runtime plugin owns this knowledge: accepting arbitrary
-// strings here would move typo detection into an expensive test/probe cycle
-// and would let a caller persist configurations the plugin cannot interpret.
-func validateProvisioningChange(sourceRoot, key string, change *builderv0.ConfigChange) error {
-	path := "test.provisioning." + key
-	op := change.GetOp()
-	if op == builderv0.ConfigChange_UNSET {
-		if !supportedProvisioningKey(key) {
-			return fmt.Errorf("unsupported config path %q (see GetAgentInformation configuration_details)", path)
-		}
-		if strings.TrimSpace(change.GetValue()) != "" {
-			return fmt.Errorf("UNSET %q must omit value", path)
-		}
-		return nil
-	}
-
-	value := strings.TrimSpace(change.GetValue())
-	if value == "" {
-		return fmt.Errorf("%s %q requires a non-empty value", op, path)
-	}
-	switch key {
-	case "python":
-		if op != builderv0.ConfigChange_SET {
-			return unsupportedConfigOp(change, path, "SET or UNSET")
-		}
-		if strings.ContainsAny(value, "<>/\\") {
-			return fmt.Errorf("%q must be a CPython version, got %q", path, value)
-		}
-	case "exclude_newer":
-		if op != builderv0.ConfigChange_SET {
-			return unsupportedConfigOp(change, path, "SET or UNSET")
-		}
-		if _, err := time.Parse(time.RFC3339, value); err != nil {
-			return fmt.Errorf("%q must be an RFC3339 timestamp: %w", path, err)
-		}
-	case "editable", "no_project", "no_build_isolation", "persistent_venv":
-		if op != builderv0.ConfigChange_SET {
-			return unsupportedConfigOp(change, path, "SET or UNSET")
-		}
-		if value != "true" && value != "false" {
-			return fmt.Errorf("%q must be \"true\" or \"false\", got %q", path, value)
-		}
-	case "requirements":
-		if op != builderv0.ConfigChange_SET && op != builderv0.ConfigChange_APPEND {
-			return unsupportedConfigOp(change, path, "SET, APPEND, or UNSET")
-		}
-		for _, relative := range splitConfigList(value) {
-			if err := validateCodeUnitPath(sourceRoot, relative, false); err != nil {
-				return fmt.Errorf("%q accepts code-unit-relative requirement files; %q is invalid: %w", path, relative, err)
-			}
-		}
-	case "with":
-		if op != builderv0.ConfigChange_SET && op != builderv0.ConfigChange_APPEND {
-			return unsupportedConfigOp(change, path, "SET, APPEND, or UNSET")
-		}
-		if err := validatePackageRequirement(value); err != nil {
-			return fmt.Errorf("%q accepts one Python package requirement spec, got %q: %w", path, value, err)
-		}
-	case "dependency_groups", "extras":
-		if op != builderv0.ConfigChange_SET && op != builderv0.ConfigChange_APPEND {
-			return unsupportedConfigOp(change, path, "SET, APPEND, or UNSET")
-		}
-		for _, name := range splitConfigList(value) {
-			if strings.ContainsAny(name, "<>/\\") {
-				return fmt.Errorf("%q accepts project-declared names, got %q", path, name)
-			}
-		}
-	case "cwd":
-		if op != builderv0.ConfigChange_SET {
-			return unsupportedConfigOp(change, path, "SET or UNSET")
-		}
-		if err := validateCodeUnitPath(sourceRoot, value, true); err != nil {
-			return fmt.Errorf("%q accepts an existing code-unit-relative directory: %w", path, err)
-		}
-	default:
-		return fmt.Errorf("unsupported config path %q (see GetAgentInformation configuration_details)", path)
-	}
-	return nil
-}
-
-func supportedProvisioningKey(key string) bool {
-	switch key {
-	case "python", "exclude_newer", "editable", "no_project", "requirements", "with", "dependency_groups", "extras", "no_build_isolation", "persistent_venv", "cwd":
-		return true
-	default:
-		return false
-	}
-}
-
-func splitConfigList(value string) []string {
-	var values []string
-	for _, item := range strings.Split(value, ",") {
-		for _, field := range strings.Fields(item) {
-			if field != "" {
-				values = append(values, field)
-			}
-		}
-	}
-	return values
-}
-
-func validatePackageRequirement(value string) error {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "." || trimmed == ".." || filepath.IsAbs(trimmed) || strings.HasPrefix(trimmed, "./") || strings.HasPrefix(trimmed, "../") || (strings.HasPrefix(trimmed, "<") && strings.HasSuffix(trimmed, ">")) {
-		return fmt.Errorf("expected a named package requirement, not a path or placeholder")
-	}
-	parsed, err := piprequirements.New().ParseString(value)
-	if err != nil {
-		return err
-	}
-	if len(parsed) != 1 {
-		return fmt.Errorf("expected exactly one requirement, parsed %d", len(parsed))
-	}
-	requirement := parsed[0]
-	if strings.TrimSpace(requirement.Name) == "" || requirement.IsFileRef || requirement.IsConstraint || requirement.IsLocalPath || requirement.IsEditable || len(requirement.GlobalOptions) > 0 {
-		return fmt.Errorf("expected a named package requirement")
-	}
-	return nil
-}
-
-func validateCodeUnitPath(sourceRoot, relative string, wantDirectory bool) error {
-	if strings.TrimSpace(sourceRoot) == "" {
-		return fmt.Errorf("builder source root is unavailable")
-	}
-	if filepath.IsAbs(relative) || filepath.Clean(relative) == ".." || strings.HasPrefix(filepath.Clean(relative), ".."+string(filepath.Separator)) {
-		return fmt.Errorf("path must stay within the code-unit root")
-	}
-	root, err := os.OpenRoot(sourceRoot)
-	if err != nil {
-		return fmt.Errorf("open code-unit root: %w", err)
-	}
-	defer root.Close()
-	info, err := root.Stat(relative)
-	if err != nil {
-		return err
-	}
-	if wantDirectory && !info.IsDir() {
-		return fmt.Errorf("path is not a directory")
-	}
-	if !wantDirectory && !info.Mode().IsRegular() {
-		return fmt.Errorf("path is not a regular file")
 	}
 	return nil
 }
