@@ -155,12 +155,14 @@ func TestApplyConfigChangeEnforcesAdvertisedProvisioningSemantics(t *testing.T) 
 	}{
 		{name: "unknown key", path: "test.provisioning.typo", value: "true", op: builderv0.ConfigChange_SET},
 		{name: "package in requirement files", path: "test.provisioning.requirements", value: "pyerfa>=2.0.1.1", op: builderv0.ConfigChange_APPEND},
+		{name: "empty requirement file list", path: "test.provisioning.requirements", value: ",", op: builderv0.ConfigChange_APPEND},
 		{name: "placeholder package", path: "test.provisioning.with", value: "<code-unit-root>", op: builderv0.ConfigChange_APPEND},
 		{name: "local path package", path: "test.provisioning.with", value: ".", op: builderv0.ConfigChange_APPEND},
 		{name: "invalid boolean", path: "test.provisioning.editable", value: "yes", op: builderv0.ConfigChange_SET},
 		{name: "append scalar", path: "test.provisioning.python", value: "3.10", op: builderv0.ConfigChange_APPEND},
 		{name: "invalid timestamp", path: "test.provisioning.exclude_newer", value: "tomorrow", op: builderv0.ConfigChange_SET},
 		{name: "missing cwd", path: "test.provisioning.cwd", value: "missing", op: builderv0.ConfigChange_SET},
+		{name: "empty extra list", path: "test.provisioning.extras", value: ",", op: builderv0.ConfigChange_APPEND},
 		{name: "valued unset", path: "test.provisioning.with", value: "pytest", op: builderv0.ConfigChange_UNSET},
 	}
 	for _, test := range invalid {

@@ -58,7 +58,11 @@ func validateProvisioningChange(sourceRoot, key string, change *builderv0.Config
 		if op != builderv0.ConfigChange_SET && op != builderv0.ConfigChange_APPEND {
 			return unsupportedConfigOp(change, path, "SET, APPEND, or UNSET")
 		}
-		for _, relative := range splitConfigList(value) {
+		values := splitConfigList(value)
+		if len(values) == 0 {
+			return fmt.Errorf("%q requires at least one requirement file path", path)
+		}
+		for _, relative := range values {
 			if err := validateCodeUnitPath(sourceRoot, relative, false); err != nil {
 				return fmt.Errorf("%q accepts code-unit-relative requirement files; %q is invalid: %w", path, relative, err)
 			}
@@ -74,7 +78,11 @@ func validateProvisioningChange(sourceRoot, key string, change *builderv0.Config
 		if op != builderv0.ConfigChange_SET && op != builderv0.ConfigChange_APPEND {
 			return unsupportedConfigOp(change, path, "SET, APPEND, or UNSET")
 		}
-		for _, name := range splitConfigList(value) {
+		values := splitConfigList(value)
+		if len(values) == 0 {
+			return fmt.Errorf("%q requires at least one project-declared name", path)
+		}
+		for _, name := range values {
 			if strings.ContainsAny(name, "<>/\\") {
 				return fmt.Errorf("%q accepts project-declared names, got %q", path, name)
 			}
