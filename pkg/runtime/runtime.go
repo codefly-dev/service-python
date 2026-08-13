@@ -129,23 +129,13 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 	// plugin is the ONLY place the generic provisioning map becomes uv flags.
 	if cmd, output, env, prov, ok := resolveTestFormula(req, s.Base.Service, s.Service.SourceLocation); ok {
 		fspec := pythonhelpers.SpecFromFormula(cmd, output, env, prov, nil)
-		selectors, selectorErr := pythonTestRequestSelectors(req, fspec.Command, fspec.Cwd)
-		if selectorErr != nil {
+		if selectorErr := applyPythonFormulaTestScope(req, &fspec); selectorErr != nil {
 			return nil, fmt.Errorf("python runtime selection: %w", selectorErr)
 		}
-		// A typed selector is authoritative execution scope. Derived pytest
-		// commands may carry broad project discovery operands (for example,
-		// `pytest --pyargs astropy docs {posargs}`). Appending one node ID to
-		// those operands still collects unrelated modules, allowing their
-		// failures to masquerade as the selected case. Keep the real runner
-		// prefix and replace broad pytest discovery before adding the exact
-		// plugin-rendered selector.
-		if req.GetSelection() != nil {
-			fspec.Command = pythonhelpers.CommandForExactSelection(fspec.Command)
-		}
-		fspec.Selectors = selectors
 		s.Wool.Info("running test formula via uv",
-			wool.Field("command", fspec.Command), wool.Field("output", fspec.Output))
+			wool.Field("command", fspec.Command),
+			wool.Field("selectors", fspec.Selectors),
+			wool.Field("output", fspec.Output))
 		fStart := time.Now()
 		fRun, fErr := pythonhelpers.RunFormulaStructured(ctx, s.Service.SourceLocation, fspec)
 		evidence := pythonhelpers.RuntimeEvidenceForFormula(s.Service.SourceLocation, cmd, output, env, prov, formulaDerivedFromProject(req, s.Base.Service))
@@ -368,18 +358,83 @@ func boundedTestLogMessage(message string) string {
 	) + message[tailStart:]
 }
 
-// pythonTestRequestSelectors translates authoritative typed scope inside the
-// Python plugin. Legacy target/filter requests remain supported for interactive
-// broad runs, but never participate in the typed acknowledgement contract.
-func pythonTestRequestSelectors(req *runtimev0.TestRequest, command []string, cwd string) ([]string, error) {
+// applyPythonFormulaTestScope translates the language-neutral runtime request
+// into runner-private formula arguments. This is the boundary that owns the
+// distinction between pytest collection targets and pytest name expressions:
+// callers provide target/filter data and never construct runner flags.
+//
+// ARCHITECTURE: A target or exact pytest node identity is authoritative scope.
+// Derived formulas may contain broad discovery operands such as
+// `pytest --pyargs astropy docs`; retaining those operands would execute
+// unrelated tests in addition to the requested target. Exact scope therefore
+// replaces broad discovery, while ordinary filters preserve the derived scope
+// and become pytest's name-expression argument. Typed TestSelection remains
+// the acknowledged, fail-closed acceptance contract.
+func applyPythonFormulaTestScope(req *runtimev0.TestRequest, spec *pythonhelpers.TestFormulaSpec) error {
 	if req.GetSelection() != nil {
-		return pythonhelpers.RenderTestSelection(req.GetSelection(), command, cwd)
+		selectors, err := pythonhelpers.RenderTestSelection(req.GetSelection(), spec.Command, spec.Cwd)
+		if err != nil {
+			return err
+		}
+		spec.Command = pythonhelpers.CommandForExactSelection(spec.Command)
+		spec.Selectors = selectors
+		return nil
 	}
-	selectors := append([]string(nil), req.GetFilters()...)
-	if target := req.GetTarget(); target != "" {
-		selectors = append(selectors, target)
+
+	// JUnit XML selects Codefly's pytest adapter. The Python plugin, not Mind,
+	// owns pytest's private distinction between positional collection targets
+	// and -k name expressions.
+	if spec.Output == pythonhelpers.OutputJUnitXML {
+		var exactSelectors, nameFilters []string
+		for _, filter := range req.GetFilters() {
+			if isExactPytestSelector(filter) {
+				exactSelectors = append(exactSelectors, filter)
+			} else if strings.TrimSpace(filter) != "" {
+				nameFilters = append(nameFilters, filter)
+			}
+		}
+		if target := strings.TrimSpace(req.GetTarget()); target != "" {
+			exactSelectors = append(exactSelectors, target)
+		}
+		if len(exactSelectors) > 0 {
+			spec.Command = pythonhelpers.CommandForExactSelection(spec.Command)
+		}
+		if len(nameFilters) > 0 {
+			spec.ExtraArgs = append(spec.ExtraArgs, "-k", strings.Join(nameFilters, " or "))
+			// A filter-only request is a complete test execution even though it
+			// has no positional selector. Say so explicitly: formula Core's auto
+			// mode intentionally treats a selector-free invocation as an
+			// environment materialization probe.
+			spec.ExecutionMode = pythonhelpers.FormulaExecutionComplete
+		}
+		spec.Selectors = exactSelectors
+		return nil
 	}
-	return selectors, nil
+
+	// Non-pytest formula runners own their positional selector grammar. Core's
+	// formula executor performs the runner-specific normalization (for example,
+	// unittest display identities to Django dotted labels).
+	spec.Selectors = append(spec.Selectors, req.GetFilters()...)
+	if target := strings.TrimSpace(req.GetTarget()); target != "" {
+		spec.Selectors = append(spec.Selectors, target)
+	}
+	return nil
+}
+
+// isExactPytestSelector recognizes collection identities, not arbitrary name
+// expressions. This knowledge belongs in the Python runtime plugin. SWE-bench
+// node IDs and file targets are positional pytest operands; simple names and
+// boolean expressions remain filters.
+func isExactPytestSelector(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if strings.Contains(value, "::") {
+		return true
+	}
+	normalized := strings.ReplaceAll(value, `\`, "/")
+	return strings.HasSuffix(normalized, ".py") || strings.Contains(normalized, ".py/")
 }
 
 func pythonDefaultTestScope(req *runtimev0.TestRequest) (string, []string, error) {

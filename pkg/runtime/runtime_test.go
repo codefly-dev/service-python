@@ -145,6 +145,126 @@ commands = pytest --pyargs broadpkg {posargs}
 	assertRuntimeTestLeftSourceClean(t, root)
 }
 
+// TestRuntimeFormulaTargetReplacesBroadPytestDiscovery proves the public
+// target field is execution scope even when the project-derived formula names
+// broad pytest roots. The runtime owns the argv translation; callers provide
+// only target data. An unrelated collection crash makes accidental widening
+// observable through real uv + pytest.
+func TestRuntimeFormulaTargetReplacesBroadPytestDiscovery(t *testing.T) {
+	if _, err := exec.LookPath("uv"); err != nil {
+		t.Fatalf("uv is required for the production Python runtime: %v", err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "broadpkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{
+		"tox.ini": `[testenv]
+commands = pytest --pyargs broadpkg {posargs}
+`,
+		"broadpkg/__init__.py":    "",
+		"broadpkg/test_broken.py": "raise RuntimeError('unselected collection must not run')\n",
+		"test_selected.py":        "def test_selected_pass():\n    assert 2 + 2 == 4\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	svc.SourceLocation = root
+	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev0.TestRequest{
+		Target: "test_selected.py::test_selected_pass",
+	})
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+		t.Fatalf("targeted result = %s counts=%+v, want only one passing case\n%s", resp.GetResult().GetState(), resp.GetCounts(), resp.GetOutput())
+	}
+	assertRuntimeTestLeftSourceClean(t, root)
+}
+
+// TestRuntimeFormulaExactFilterReplacesBroadPytestDiscovery proves exact node
+// identities carried in the repeated filters field remain exact targets. This
+// is the shape used by result-driven graders that own a set of test identities.
+func TestRuntimeFormulaExactFilterReplacesBroadPytestDiscovery(t *testing.T) {
+	if _, err := exec.LookPath("uv"); err != nil {
+		t.Fatalf("uv is required for the production Python runtime: %v", err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "broadpkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{
+		"tox.ini": `[testenv]
+commands = pytest --pyargs broadpkg {posargs}
+`,
+		"broadpkg/__init__.py":    "",
+		"broadpkg/test_broken.py": "raise RuntimeError('unselected collection must not run')\n",
+		"test_selected.py":        "def test_selected_pass():\n    assert 2 + 2 == 4\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	svc.SourceLocation = root
+	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev0.TestRequest{
+		Filters: []string{"test_selected.py::test_selected_pass"},
+	})
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+		t.Fatalf("filtered result = %s counts=%+v, want only one passing case\n%s", resp.GetResult().GetState(), resp.GetCounts(), resp.GetOutput())
+	}
+	assertRuntimeTestLeftSourceClean(t, root)
+}
+
+// TestRuntimeFormulaNameFilterUsesPytestExpression proves ordinary name
+// filters retain the project-derived discovery roots and become runner-owned
+// pytest expressions rather than invalid positional paths.
+func TestRuntimeFormulaNameFilterUsesPytestExpression(t *testing.T) {
+	if _, err := exec.LookPath("uv"); err != nil {
+		t.Fatalf("uv is required for the production Python runtime: %v", err)
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "broadpkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{
+		"tox.ini": `[testenv]
+commands = pytest --pyargs broadpkg {posargs}
+`,
+		"broadpkg/__init__.py": "",
+		"broadpkg/test_cases.py": `def test_selected_pass():
+    assert 2 + 2 == 4
+
+def test_unselected_fail():
+    assert False
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	svc.SourceLocation = root
+	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev0.TestRequest{
+		Filters: []string{"test_selected_pass"},
+	})
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+		t.Fatalf("name-filtered result = %s counts=%+v, want one selected passing case\n%s", resp.GetResult().GetState(), resp.GetCounts(), resp.GetOutput())
+	}
+	assertRuntimeTestLeftSourceClean(t, root)
+}
+
 // TestRuntimeFormulaNormalizesUnittestDisplaySelection proves the production
 // agent boundary accepts the canonical case identity returned by unittest
 // (`method (module.Class)`) and routes it back through a formula that consumes
