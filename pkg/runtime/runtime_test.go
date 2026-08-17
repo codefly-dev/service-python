@@ -185,6 +185,46 @@ commands = pytest --pyargs broadpkg {posargs}
 	assertRuntimeTestLeftSourceClean(t, root)
 }
 
+// TestRuntimeFormulaCombinesFileTargetAndRelativeNodeFilter is the exact
+// production request shape emitted by Mind's regression-test capability. A
+// relative `Class::method` filter belongs beneath the file target; passing the
+// two strings as independent pytest operands collects zero tests.
+func TestRuntimeFormulaCombinesFileTargetAndRelativeNodeFilter(t *testing.T) {
+	if _, err := exec.LookPath("uv"); err != nil {
+		t.Fatalf("uv is required for the production Python runtime: %v", err)
+	}
+	root := t.TempDir()
+	for path, content := range map[string]string{
+		"tox.ini": `[testenv]
+commands = pytest {posargs}
+`,
+		"test_selected.py": `class TestThing:
+    def test_selected_pass(self):
+        assert 2 + 2 == 4
+
+    def test_unselected_fail(self):
+        assert False
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	svc.SourceLocation = root
+	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev0.TestRequest{
+		Target: "test_selected.py", Filters: []string{"TestThing::test_selected_pass"},
+	})
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+		t.Fatalf("relative-node result = %s counts=%+v, want one selected passing case\n%s", resp.GetResult().GetState(), resp.GetCounts(), resp.GetOutput())
+	}
+	assertRuntimeTestLeftSourceClean(t, root)
+}
+
 // TestRuntimeFormulaExactFilterReplacesBroadPytestDiscovery proves exact node
 // identities carried in the repeated filters field remain exact targets. This
 // is the shape used by result-driven graders that own a set of test identities.

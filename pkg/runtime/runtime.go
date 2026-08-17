@@ -385,19 +385,34 @@ func applyPythonFormulaTestScope(req *runtimev0.TestRequest, spec *pythonhelpers
 	// owns pytest's private distinction between positional collection targets
 	// and -k name expressions.
 	if spec.Output == pythonhelpers.OutputJUnitXML {
-		var exactSelectors, namePatterns []string
+		target := strings.TrimSpace(req.GetTarget())
+		var exactSelectors, relativeNodeSelectors, namePatterns []string
 		for _, filter := range req.GetFilters() {
-			if isExactPytestSelector(filter) {
+			if isRelativePytestNodeSelector(filter) {
+				relativeNodeSelectors = append(relativeNodeSelectors, strings.TrimSpace(filter))
+			} else if isExactPytestSelector(filter) {
 				exactSelectors = append(exactSelectors, filter)
 			} else if strings.TrimSpace(filter) != "" {
 				namePatterns = append(namePatterns, filter)
 			}
 		}
+		if len(relativeNodeSelectors) > 0 {
+			if !isPytestFileTarget(target) {
+				return fmt.Errorf("Python relative node selectors %q require one .py target, got %q", relativeNodeSelectors, target)
+			}
+			if len(exactSelectors) > 0 || len(namePatterns) > 0 {
+				return fmt.Errorf("Python relative node selectors cannot be mixed with independent exact selectors or name filters; use a typed TestSelection")
+			}
+			for _, selector := range relativeNodeSelectors {
+				exactSelectors = append(exactSelectors, target+"::"+strings.TrimPrefix(selector, "::"))
+			}
+			target = ""
+		}
 		nameFilters, err := normalizePytestNameFilters(namePatterns)
 		if err != nil {
 			return err
 		}
-		if target := strings.TrimSpace(req.GetTarget()); target != "" {
+		if target != "" {
 			exactSelectors = append(exactSelectors, target)
 		}
 		if len(exactSelectors) > 0 {
@@ -441,11 +456,37 @@ func isExactPytestSelector(value string) bool {
 	return strings.HasSuffix(normalized, ".py") || strings.Contains(normalized, ".py/")
 }
 
+// isRelativePytestNodeSelector recognizes the pytest identity suffix callers
+// naturally pair with TestRequest.target: `Class::method`. It is not a valid
+// positional operand on its own. The runtime joins it to the file target so an
+// identical logical request cannot accidentally execute two unrelated
+// selectors and collect zero cases.
+func isRelativePytestNodeSelector(value string) bool {
+	value = strings.TrimSpace(value)
+	if !strings.Contains(value, "::") {
+		return false
+	}
+	return !isPytestFileTarget(strings.SplitN(value, "::", 2)[0])
+}
+
+func isPytestFileTarget(value string) bool {
+	value = strings.TrimSpace(strings.ReplaceAll(value, `\`, "/"))
+	return value != "" && !strings.Contains(value, "::") && strings.HasSuffix(value, ".py")
+}
+
 func pythonDefaultTestScope(req *runtimev0.TestRequest) (string, []string, error) {
 	if req.GetSelection() == nil {
 		target := strings.TrimSpace(req.GetTarget())
 		namePatterns := make([]string, 0, len(req.GetFilters()))
+		var relativeNode string
 		for _, filter := range req.GetFilters() {
+			if isRelativePytestNodeSelector(filter) {
+				if relativeNode != "" {
+					return "", nil, fmt.Errorf("Python default test request has multiple relative node selectors; use one typed TestSelection")
+				}
+				relativeNode = strings.TrimSpace(filter)
+				continue
+			}
 			if !isExactPytestSelector(filter) {
 				namePatterns = append(namePatterns, filter)
 				continue
@@ -454,6 +495,12 @@ func pythonDefaultTestScope(req *runtimev0.TestRequest) (string, []string, error
 				return "", nil, fmt.Errorf("Python test request has multiple exact targets %q and %q; use one typed TestSelection", target, filter)
 			}
 			target = strings.TrimSpace(filter)
+		}
+		if relativeNode != "" {
+			if !isPytestFileTarget(target) || len(namePatterns) > 0 {
+				return "", nil, fmt.Errorf("Python relative node selector %q requires one .py target and no name filters; use a typed TestSelection", relativeNode)
+			}
+			target += "::" + strings.TrimPrefix(relativeNode, "::")
 		}
 		filters, err := normalizePytestNameFilters(namePatterns)
 		return target, filters, err
