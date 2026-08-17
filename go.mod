@@ -5,7 +5,7 @@ go 1.25.12
 toolchain go1.26.6
 
 require (
-	github.com/codefly-dev/core v0.2.127
+	github.com/codefly-dev/core v0.2.128
 	github.com/scagogogo/python-requirements-parser v0.0.0-20250717025652-6ca77234c827
 	gopkg.in/yaml.v3 v3.0.1
 )
