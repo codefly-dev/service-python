@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	corecode "github.com/codefly-dev/core/code"
+	"github.com/codefly-dev/core/code/semantic"
 	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
 	codev0 "github.com/codefly-dev/core/generated/go/codefly/services/code/v0"
 	runners "github.com/codefly-dev/core/runners/base"
@@ -37,7 +38,7 @@ type Code struct {
 func New(svc *pythonservice.Service) *Code {
 	c := &Code{
 		Service:          svc,
-		PythonCodeServer: corecode.NewPythonCodeServer(".", nil),
+		PythonCodeServer: corecode.NewPythonCodeServer(".", semanticOpts()),
 	}
 	return c
 }
@@ -59,7 +60,7 @@ func (c *Code) SourceDir() string {
 // calling embedded RPC methods can share the same guard.
 func (c *Code) EnsureInit() {
 	if !c.initialized {
-		c.PythonCodeServer = corecode.NewPythonCodeServer(c.SourceDir(), nil)
+		c.PythonCodeServer = corecode.NewPythonCodeServer(c.SourceDir(), semanticOpts())
 		c.SetSourceFixer(c.fixPython)
 		c.initialized = true
 	}
@@ -124,4 +125,12 @@ func (c *Code) runnerEnvironment(ctx context.Context) runners.RunnerEnvironment 
 		runtimeContext = c.Service.Base.Runtime.RuntimeContext
 	}
 	return runners.ResolveStandaloneEnvironment(ctx, c.SourceDir(), runtimeContext)
+}
+
+// semanticOpts installs the tree-sitter source analyzer that core omits by
+// default (so Go agents can build CGO-free). This agent forwards a semantic
+// index through its Tooling and already releases with CGO_ENABLED=1, so it
+// opts back in explicitly. See core/code.WithSemanticAnalyzer.
+func semanticOpts() []corecode.ServerOption {
+	return []corecode.ServerOption{corecode.WithSemanticAnalyzer(semantic.New())}
 }
