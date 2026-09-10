@@ -21,7 +21,7 @@
 //	                                 (stdin ◀── code ── stdin)
 //	                                 (stdout ──▶ sentinel-reader ──▶ string)
 //
-// Mode-consistent: the REPL uses the plugin's ActiveEnv. A Docker-mode
+// Mode-consistent: the REPL uses the plugin's active environment. A Docker-mode
 // plugin opens the REPL inside its container (same venv, same Python
 // version as the running service). Nix-mode plugins get the REPL
 // inside the flake's devShell.
@@ -142,10 +142,10 @@ func (s *Runtime) getOrStartRepl(ctx context.Context) (*PythonRepl, error) {
 	return r, nil
 }
 
-// resolveReplEnv returns the plugin's ActiveEnv or a standalone one
+// resolveReplEnv returns the plugin's active environment or a standalone one
 // when Runtime.Init hasn't populated it. Same pattern as Code/Tooling.
 func (s *Runtime) resolveReplEnv(ctx context.Context) runners.RunnerEnvironment {
-	if env := s.Service.ActiveEnv(); env != nil {
+	if env := s.Service.ActiveEnvironment(); env != nil {
 		return env
 	}
 	var rctx *basev0.RuntimeContext
