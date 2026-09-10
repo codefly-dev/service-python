@@ -145,7 +145,7 @@ func (s *Runtime) getOrStartRepl(ctx context.Context) (*PythonRepl, error) {
 // resolveReplEnv returns the plugin's ActiveEnv or a standalone one
 // when Runtime.Init hasn't populated it. Same pattern as Code/Tooling.
 func (s *Runtime) resolveReplEnv(ctx context.Context) runners.RunnerEnvironment {
-	if env := s.Service.ActiveEnv; env != nil {
+	if env := s.Service.ActiveEnv(); env != nil {
 		return env
 	}
 	var rctx *basev0.RuntimeContext

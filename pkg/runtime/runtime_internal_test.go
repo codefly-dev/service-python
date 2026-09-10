@@ -1,16 +1,19 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
 	"github.com/codefly-dev/core/resources"
+	runners "github.com/codefly-dev/core/runners/base"
 	pythonhelpers "github.com/codefly-dev/core/runners/python"
 	pythonservice "github.com/codefly-dev/service-python/pkg/service"
 )
@@ -420,4 +423,44 @@ func TestResolveTestFormulaOverlaysCommandlessHealOntoDerivedFormula(t *testing.
 	if prov["no_project"] != "true" {
 		t.Fatalf("derived provisioning must survive the overlay, got %v", prov)
 	}
+}
+
+// TestResolveReplEnvIsSafeWhileTheActiveEnvironmentIsRepublished covers the
+// REPL's half of the same lookup: `exec` resolves an environment on its own
+// gRPC goroutine while a specialization's Init publishes one and Stop clears
+// it. Whichever side wins, the REPL must get an environment to boot into.
+func TestResolveReplEnvIsSafeWhileTheActiveEnvironmentIsRepublished(t *testing.T) {
+	ctx := context.Background()
+	service := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
+	service.SourceLocation = t.TempDir()
+	rt := New(service)
+
+	env, err := runners.NewNativeEnvironment(ctx, service.SourceLocation)
+	if err != nil {
+		t.Fatalf("native environment: %v", err)
+	}
+
+	done := make(chan struct{})
+	var publisher sync.WaitGroup
+	publisher.Add(1)
+	go func() {
+		defer publisher.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				service.SetActiveEnv(env)
+				service.SetActiveEnv(nil)
+			}
+		}
+	}()
+
+	for i := 0; i < 200; i++ {
+		if rt.resolveReplEnv(ctx) == nil {
+			t.Fatalf("resolveReplEnv returned nil on attempt %d", i)
+		}
+	}
+	close(done)
+	publisher.Wait()
 }

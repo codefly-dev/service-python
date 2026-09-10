@@ -75,6 +75,11 @@ func (c *Code) Execute(ctx context.Context, req *codev0.CodeRequest) (*codev0.Co
 // formatter. Both stages operate on stdin and return source on stdout, so the
 // core Code server remains the sole writer and can honor VFS/dry-run semantics.
 func (c *Code) fixPython(ctx context.Context, input corecode.FixInput) (corecode.FixResult, error) {
+	// One snapshot for the whole request: a specialization publishing or
+	// clearing its environment mid-fix must not send check and format to
+	// two different interpreters.
+	active := c.Service.ActiveEnv()
+
 	checkArgs := []string{"check", "--fix-only"}
 	if input.Mode == basev0.FixMode_FIX_MODE_AGGRESSIVE {
 		checkArgs = append(checkArgs, "--unsafe-fixes")
@@ -86,13 +91,14 @@ func (c *Code) fixPython(ctx context.Context, input corecode.FixInput) (corecode
 	// download the project's dependency graph. Factory Nix shells include Ruff,
 	// the Docker runtime exposes /venv/bin on PATH, and native users may supply
 	// either a project-local .venv binary or Ruff on the host PATH.
-	ruff := c.ruffCommand()
-	checked, checkLogBytes, err := runners.RunInput(ctx, c.runnerEnvironment(ctx), c.SourceDir(), input.Content, ruff, checkArgs...)
+	ruff := ruffCommand(active, c.SourceDir())
+	env := c.runnerEnvironment(ctx, active)
+	checked, checkLogBytes, err := runners.RunInput(ctx, env, c.SourceDir(), input.Content, ruff, checkArgs...)
 	checkLog := string(checkLogBytes)
 	if err != nil {
 		return corecode.FixResult{}, fmt.Errorf("ruff check --fix-only (Ruff must already be provisioned): %w: %s", err, strings.TrimSpace(checkLog))
 	}
-	formatted, formatLogBytes, err := runners.RunInput(ctx, c.runnerEnvironment(ctx), c.SourceDir(), checked, ruff, "format", "--stdin-filename", input.Path, "-")
+	formatted, formatLogBytes, err := runners.RunInput(ctx, env, c.SourceDir(), checked, ruff, "format", "--stdin-filename", input.Path, "-")
 	formatLog := string(formatLogBytes)
 	if err != nil {
 		return corecode.FixResult{}, fmt.Errorf("ruff format: %w: %s", err, strings.TrimSpace(formatLog))
@@ -105,9 +111,9 @@ func (c *Code) fixPython(ctx context.Context, input corecode.FixInput) (corecode
 	}, nil
 }
 
-func (c *Code) ruffCommand() string {
-	if c.Service.ActiveEnv == nil {
-		candidate := filepath.Join(c.SourceDir(), ".venv", "bin", "ruff")
+func ruffCommand(active runners.RunnerEnvironment, sourceDir string) string {
+	if active == nil {
+		candidate := filepath.Join(sourceDir, ".venv", "bin", "ruff")
 		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
 			return candidate
 		}
@@ -115,10 +121,9 @@ func (c *Code) ruffCommand() string {
 	return "ruff"
 }
 
-func (c *Code) runnerEnvironment(ctx context.Context) runners.RunnerEnvironment {
-	env := c.Service.ActiveEnv
-	if env != nil {
-		return env
+func (c *Code) runnerEnvironment(ctx context.Context, active runners.RunnerEnvironment) runners.RunnerEnvironment {
+	if active != nil {
+		return active
 	}
 	var runtimeContext *basev0.RuntimeContext
 	if c.Service.Base != nil && c.Service.Base.Runtime != nil {
