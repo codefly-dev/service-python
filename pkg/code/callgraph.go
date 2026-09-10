@@ -137,7 +137,7 @@ print(json.dumps({'calls': calls, 'implements': implements, 'module': workdir}))
 	// so AST analysis uses the same interpreter as the running service.
 	// Pre-Init falls through ResolveStandaloneEnvironment which picks Nix
 	// if declared, native otherwise — keeps mode consistency when possible.
-	env := c.Service.ActiveEnv
+	env := c.Service.ActiveEnv()
 	if env == nil {
 		var rctx *basev0.RuntimeContext
 		if c.Service.Base != nil && c.Service.Base.Runtime != nil {

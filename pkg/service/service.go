@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/codefly-dev/core/agents/services"
 	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
@@ -45,11 +46,33 @@ type Service struct {
 	// Load). Specializations may override at Load time.
 	SourceLocation string
 
-	// ActiveEnv is a specialization's active RunnerEnvironment, consumed by
-	// Code / Tooling so every spawn routes through the same mode (native /
-	// docker / nix). The generic runtime leaves it nil; call sites fall back
-	// to a fresh NativeEnvironment.
-	ActiveEnv runners.RunnerEnvironment
+	// activeEnv is a specialization's active RunnerEnvironment, consumed by
+	// Code / Tooling / the REPL so every spawn routes through the same mode
+	// (native / docker / nix). The generic runtime leaves it nil; call sites
+	// fall back to a fresh NativeEnvironment.
+	//
+	// A specialization publishes it from Init and clears it from Stop, while
+	// Code, Tooling and the REPL read it on their own gRPC goroutines, so it
+	// is reachable only through ActiveEnv / SetActiveEnv.
+	activeEnvMu sync.RWMutex
+	activeEnv   runners.RunnerEnvironment
+}
+
+// ActiveEnv returns the environment a specialization published, or nil when
+// none is active — before Init, or after the specialization tore it down.
+func (s *Service) ActiveEnv() runners.RunnerEnvironment {
+	s.activeEnvMu.RLock()
+	defer s.activeEnvMu.RUnlock()
+	return s.activeEnv
+}
+
+// SetActiveEnv publishes the specialization's active RunnerEnvironment.
+// Pass nil once the environment is shut down: readers then fall back to a
+// standalone environment instead of spawning into a dead one.
+func (s *Service) SetActiveEnv(env runners.RunnerEnvironment) {
+	s.activeEnvMu.Lock()
+	defer s.activeEnvMu.Unlock()
+	s.activeEnv = env
 }
 
 // New builds a generic Python Service bound to the given agent manifest.
