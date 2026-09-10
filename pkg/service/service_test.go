@@ -116,12 +116,12 @@ func TestGetAgentInformationGeneric(t *testing.T) {
 	}
 }
 
-// TestActiveEnvPublishAndClear locks in the contract specializations use:
+// TestActiveEnvironmentPublishAndClear locks in the contract specializations use:
 // what Init publishes is what Code, Tooling and the REPL read, and what Stop
 // clears sends them back to the standalone fallback.
-func TestActiveEnvPublishAndClear(t *testing.T) {
+func TestActiveEnvironmentPublishAndClear(t *testing.T) {
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
-	if svc.ActiveEnv() != nil {
+	if svc.ActiveEnvironment() != nil {
 		t.Fatal("a Service with no specialization environment must read nil")
 	}
 
@@ -129,21 +129,21 @@ func TestActiveEnvPublishAndClear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("native environment: %v", err)
 	}
-	svc.SetActiveEnv(env)
-	if svc.ActiveEnv() != env {
+	svc.SetActiveEnvironment(env)
+	if svc.ActiveEnvironment() != env {
 		t.Fatal("published environment is not the one readers get")
 	}
 
-	svc.SetActiveEnv(nil)
-	if svc.ActiveEnv() != nil {
+	svc.SetActiveEnvironment(nil)
+	if svc.ActiveEnvironment() != nil {
 		t.Fatal("cleared environment must read nil, not a shut-down one")
 	}
 }
 
-// TestActiveEnvUnderConcurrentPublishAndRead is the -race guard for the
+// TestActiveEnvironmentUnderConcurrentPublishAndRead is the -race guard for the
 // field itself: a specialization publishes from Init and clears from Stop
 // while Code, Tooling and the REPL read on their own gRPC goroutines.
-func TestActiveEnvUnderConcurrentPublishAndRead(t *testing.T) {
+func TestActiveEnvironmentUnderConcurrentPublishAndRead(t *testing.T) {
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	env, err := runners.NewNativeEnvironment(context.Background(), t.TempDir())
 	if err != nil {
@@ -155,8 +155,8 @@ func TestActiveEnvUnderConcurrentPublishAndRead(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 1000; i++ {
-			svc.SetActiveEnv(env)
-			svc.SetActiveEnv(nil)
+			svc.SetActiveEnvironment(env)
+			svc.SetActiveEnvironment(nil)
 		}
 	}()
 	for readers := 0; readers < 3; readers++ {
@@ -164,7 +164,7 @@ func TestActiveEnvUnderConcurrentPublishAndRead(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 1000; i++ {
-				if got := svc.ActiveEnv(); got != nil && got != env {
+				if got := svc.ActiveEnvironment(); got != nil && got != env {
 					t.Errorf("read an environment that was never published: %#v", got)
 					return
 				}

@@ -450,8 +450,8 @@ func TestResolveReplEnvIsSafeWhileTheActiveEnvironmentIsRepublished(t *testing.T
 			case <-done:
 				return
 			default:
-				service.SetActiveEnv(env)
-				service.SetActiveEnv(nil)
+				service.SetActiveEnvironment(env)
+				service.SetActiveEnvironment(nil)
 			}
 		}
 	}()

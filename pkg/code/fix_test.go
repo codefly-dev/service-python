@@ -119,8 +119,8 @@ func TestCodeIsSafeWhileTheActiveEnvironmentIsRepublished(t *testing.T) {
 			case <-done:
 				return
 			default:
-				svc.SetActiveEnv(env)
-				svc.SetActiveEnv(nil)
+				svc.SetActiveEnvironment(env)
+				svc.SetActiveEnvironment(nil)
 			}
 		}
 	}()

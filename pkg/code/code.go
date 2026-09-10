@@ -78,7 +78,7 @@ func (c *Code) fixPython(ctx context.Context, input corecode.FixInput) (corecode
 	// One snapshot for the whole request: a specialization publishing or
 	// clearing its environment mid-fix must not send check and format to
 	// two different interpreters.
-	active := c.Service.ActiveEnv()
+	active := c.Service.ActiveEnvironment()
 
 	checkArgs := []string{"check", "--fix-only"}
 	if input.Mode == basev0.FixMode_FIX_MODE_AGGRESSIVE {
