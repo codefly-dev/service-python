@@ -1,0 +1,4 @@
+name: python-conformance
+layout: flat
+services:
+  - name: subject

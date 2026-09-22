@@ -1,0 +1,9 @@
+name: subject
+version: 0.0.0
+agent:
+  kind: codefly:service
+  publisher: codefly.dev
+  name: python
+  version: latest
+spec:
+  source-dir: code

@@ -5,6 +5,7 @@ go 1.27.0
 require (
 	github.com/codefly-dev/core v0.4.0
 	github.com/scagogogo/python-requirements-parser v0.0.0-20250717025652-6ca77234c827
+	github.com/stretchr/testify v1.12.1
 	gopkg.in/yaml.v3 v3.0.1
 )
 
