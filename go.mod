@@ -3,7 +3,7 @@ module github.com/codefly-dev/service-python
 go 1.27.0
 
 require (
-	github.com/codefly-dev/core v0.4.0
+	github.com/codefly-dev/core v0.4.4-0.20260922090214-83b3904dd07e
 	github.com/scagogogo/python-requirements-parser v0.0.0-20250717025652-6ca77234c827
 	github.com/stretchr/testify v1.12.1
 	gopkg.in/yaml.v3 v3.0.1
