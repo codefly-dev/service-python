@@ -39,7 +39,7 @@ jobs:
           -v "$GITHUB_WORKSPACE:/workspace"
           -v "$SYFT_PATH:/usr/local/bin/syft:ro"
           -w /workspace
-          ghcr.io/goreleaser/goreleaser-cross:v1.27.1-1
+          ghcr.io/goreleaser/goreleaser-cross:v1.27.3
           release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
