@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
 	pythonhelpers "github.com/codefly-dev/core/runners/python"
@@ -43,10 +43,10 @@ func TestResponseLogSummaryPreservesStructuredRuntimeState(t *testing.T) {
 	// Coverage is rendered from the structured TestCoverage.total_pct field, not
 	// the deprecated flat TestResponse.coverage_pct mirror.
 	t.Run("coverage from structured field", func(t *testing.T) {
-		response := &runtimev0.TestResponse{
-			Result:   &runtimev0.TestRunResult{State: runtimev0.TestRunResult_PASSED},
-			Counts:   &runtimev0.TestCounts{Total: 2, Passed: 2},
-			Coverage: &runtimev0.TestCoverage{TotalPct: 87.5},
+		response := &runtimev1.TestResponse{
+			Result:   &runtimev1.TestRunResult{State: runtimev1.TestRunResult_PASSED},
+			Counts:   &runtimev1.TestCounts{Total: 2, Passed: 2},
+			Coverage: &runtimev1.TestCoverage{TotalPct: 87.5},
 		}
 		got := testResponseLogSummary(response)
 		if got != "2 passed, 87.5% coverage" {
@@ -86,14 +86,14 @@ func TestFinalizeDefaultTestResponseLogsTheReturnedZeroCaseError(t *testing.T) {
 	service := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	runtime := New(service)
 	response, _ := runtime.finalizeDefaultTestResponse(
-		&runtimev0.TestRequest{},
+		&runtimev1.TestRequest{},
 		&pythonhelpers.StructuredTestRun{},
 		errors.New("default runner exited before collecting tests"),
 		time.Second,
 		"Python runtime evidence: formula_source: not detected",
 	)
 
-	if response.GetResult().GetState() != runtimev0.TestRunResult_ERRORED {
+	if response.GetResult().GetState() != runtimev1.TestRunResult_ERRORED {
 		t.Fatalf("final state = %s, want ERRORED", response.GetResult().GetState())
 	}
 	summary := testResponseLogSummary(response)
@@ -106,9 +106,9 @@ func TestAppendTestResponseEvidenceMakesFailedEnvironmentBlockActionable(t *test
 	message := "env-blocked (runtime-data-stale): required runtime data is stale or expired: " +
 		"astropy.utils.exceptions.AstropyWarning: leap-second auto-update failed due to " +
 		"IERSStaleWarning('leap-second file is expired.') (1 test(s) failed)"
-	response := &runtimev0.TestResponse{
-		Result: &runtimev0.TestRunResult{State: runtimev0.TestRunResult_FAILED, Message: message},
-		Counts: &runtimev0.TestCounts{Total: 1, Failed: 1},
+	response := &runtimev1.TestResponse{
+		Result: &runtimev1.TestRunResult{State: runtimev1.TestRunResult_FAILED, Message: message},
+		Counts: &runtimev1.TestCounts{Total: 1, Failed: 1},
 	}
 	evidence := "Python runtime evidence:\n  env:\n    CFLAGS: -Wno-error\n  settable_configuration:\n    test.env.<NAME>: SET a diagnostic-proven environment variable"
 
@@ -131,9 +131,9 @@ func TestAppendTestResponseEvidenceMakesFailedEnvironmentBlockActionable(t *test
 }
 
 func TestAppendTestResponseEvidenceDoesNotAnnotateCandidateFailure(t *testing.T) {
-	response := &runtimev0.TestResponse{
-		Result: &runtimev0.TestRunResult{State: runtimev0.TestRunResult_FAILED, Message: "AssertionError: wrong value"},
-		Counts: &runtimev0.TestCounts{Total: 1, Failed: 1},
+	response := &runtimev1.TestResponse{
+		Result: &runtimev1.TestRunResult{State: runtimev1.TestRunResult_FAILED, Message: "AssertionError: wrong value"},
+		Counts: &runtimev1.TestCounts{Total: 1, Failed: 1},
 	}
 	appendTestResponseEvidence(response, "Python runtime evidence: should stay out of candidate failures")
 	if got := response.GetResult().GetMessage(); got != "AssertionError: wrong value" {
@@ -156,8 +156,8 @@ func TestResponseLogSummaryBoundsNativeDiagnosticsButKeepsTerminalCause(t *testi
 	prefix := "env-blocked (provisioning-failed): editable project install failed\n"
 	terminal := "wcslib_wtbarr_wrap.c:209:3: error: incompatible function pointer types\n2 errors generated\n"
 	diagnostic := prefix + strings.Repeat("compiling café source unit\n", 4_000) + terminal
-	response := &runtimev0.TestResponse{Result: &runtimev0.TestRunResult{
-		State:   runtimev0.TestRunResult_ERRORED,
+	response := &runtimev1.TestResponse{Result: &runtimev1.TestRunResult{
+		State:   runtimev1.TestRunResult_ERRORED,
 		Message: diagnostic,
 	}}
 
@@ -190,8 +190,8 @@ func TestResponseLogSummaryKeepsHeadPastInvalidUTF8(t *testing.T) {
 	headBody := "\xffHEAD_MARKER_KEEP\n"
 	terminal := "ld: symbol(s) not found\n"
 	diagnostic := prefix + headBody + strings.Repeat("x", 6_000) + terminal
-	response := &runtimev0.TestResponse{Result: &runtimev0.TestRunResult{
-		State:   runtimev0.TestRunResult_ERRORED,
+	response := &runtimev1.TestResponse{Result: &runtimev1.TestRunResult{
+		State:   runtimev1.TestRunResult_ERRORED,
 		Message: diagnostic,
 	}}
 
@@ -270,7 +270,7 @@ func TestResolveTestFormulaOverlaysCommandlessHealOntoConfiguredFormula(t *testi
 			Env:          map[string]string{"KEEP": "1"},
 		},
 	}
-	req := &runtimev0.TestRequest{Formula: &runtimev0.TestFormula{
+	req := &runtimev1.TestRequest{Formula: &runtimev1.TestFormula{
 		Provisioning: map[string]string{"cwd": "tests", "with": "Werkzeug<3"},
 		Env:          map[string]string{"PYTHONPATH": "."},
 	}}
@@ -336,7 +336,7 @@ func TestResolveTestFormulaOverlaysCommandlessServiceConfigurationOntoDerivedFor
 		Provisioning: map[string]string{"python": "3.11"},
 	}}
 
-	cmd, output, env, provisioning, ok := resolveTestFormula(&runtimev0.TestRequest{}, svc, dir)
+	cmd, output, env, provisioning, ok := resolveTestFormula(&runtimev1.TestRequest{}, svc, dir)
 	if !ok {
 		t.Fatal("resolveTestFormula returned ok=false")
 	}
@@ -382,7 +382,7 @@ test_all =
 		t.Fatal(err)
 	}
 
-	cmd, output, _, provisioning, ok := resolveTestFormula(&runtimev0.TestRequest{}, nil, dir)
+	cmd, output, _, provisioning, ok := resolveTestFormula(&runtimev1.TestRequest{}, nil, dir)
 	if !ok {
 		t.Fatal("resolveTestFormula returned ok=false")
 	}
@@ -406,7 +406,7 @@ func TestResolveTestFormulaOverlaysCommandlessHealOntoDerivedFormula(t *testing.
 	if err := os.WriteFile(filepath.Join(dir, "tox.ini"), []byte(toxIni), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	req := &runtimev0.TestRequest{Formula: &runtimev0.TestFormula{
+	req := &runtimev1.TestRequest{Formula: &runtimev1.TestFormula{
 		Provisioning: map[string]string{"cwd": "tests"},
 	}}
 

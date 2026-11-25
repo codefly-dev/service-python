@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/resources"
 	selectioncontract "github.com/codefly-dev/core/runners/testselection"
 
@@ -49,7 +49,7 @@ func TestRuntimeInitDoesNotMutateSourceCheckout(t *testing.T) {
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	svc.SourceLocation = dir
 	rt := pythonruntime.New(svc)
-	if _, err := rt.Init(context.Background(), &runtimev0.InitRequest{}); err != nil {
+	if _, err := rt.Init(context.Background(), &runtimev1.InitRequest{}); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 
@@ -76,8 +76,8 @@ func TestRuntimeHonorsTypedSelectionWithDefaultRunner(t *testing.T) {
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	svc.SourceLocation = dir
 	rt := pythonruntime.New(svc)
-	req := &runtimev0.TestRequest{
-		Selection: &runtimev0.TestSelection{Scope: &runtimev0.TestSelection_TestCase{TestCase: &runtimev0.TestCaseSelection{
+	req := &runtimev1.TestRequest{
+		Selection: &runtimev1.TestSelection{Scope: &runtimev1.TestSelection_TestCase{TestCase: &runtimev1.TestCaseSelection{
 			Path:          "test_calc.py",
 			QualifiedName: []string{"CalculatorTests", "test_selected_failure"},
 		}}},
@@ -90,7 +90,7 @@ func TestRuntimeHonorsTypedSelectionWithDefaultRunner(t *testing.T) {
 	if err := selectioncontract.VerifyAcknowledgement(req, resp); err != nil {
 		t.Fatalf("selection acknowledgement: %v", err)
 	}
-	if resp.GetResult().GetState() != runtimev0.TestRunResult_FAILED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetFailed() != 1 {
+	if resp.GetResult().GetState() != runtimev1.TestRunResult_FAILED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetFailed() != 1 {
 		t.Fatalf("selected result = %s counts=%+v, want only one failing case", resp.GetResult().GetState(), resp.GetCounts())
 	}
 	assertRuntimeTestLeftSourceClean(t, dir)
@@ -125,8 +125,8 @@ commands = pytest --pyargs broadpkg {posargs}
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	svc.SourceLocation = root
 	rt := pythonruntime.New(svc)
-	req := &runtimev0.TestRequest{
-		Selection: &runtimev0.TestSelection{Scope: &runtimev0.TestSelection_TestCase{TestCase: &runtimev0.TestCaseSelection{
+	req := &runtimev1.TestRequest{
+		Selection: &runtimev1.TestSelection{Scope: &runtimev1.TestSelection_TestCase{TestCase: &runtimev1.TestCaseSelection{
 			Path:          "test_selected.py",
 			QualifiedName: []string{"test_selected_pass"},
 		}}},
@@ -139,7 +139,7 @@ commands = pytest --pyargs broadpkg {posargs}
 	if err := selectioncontract.VerifyAcknowledgement(req, resp); err != nil {
 		t.Fatalf("selection acknowledgement: %v", err)
 	}
-	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+	if resp.GetResult().GetState() != runtimev1.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
 		t.Fatalf("selected result = %s counts=%+v, want only one passing case\n%s", resp.GetResult().GetState(), resp.GetCounts(), resp.GetOutput())
 	}
 	assertRuntimeTestLeftSourceClean(t, root)
@@ -173,13 +173,13 @@ commands = pytest --pyargs broadpkg {posargs}
 
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	svc.SourceLocation = root
-	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev0.TestRequest{
+	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev1.TestRequest{
 		Target: "test_selected.py::test_selected_pass",
 	})
 	if err != nil {
 		t.Fatalf("Test: %v", err)
 	}
-	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+	if resp.GetResult().GetState() != runtimev1.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
 		t.Fatalf("targeted result = %s counts=%+v, want only one passing case\n%s", resp.GetResult().GetState(), resp.GetCounts(), resp.GetOutput())
 	}
 	assertRuntimeTestLeftSourceClean(t, root)
@@ -213,13 +213,13 @@ commands = pytest {posargs}
 
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	svc.SourceLocation = root
-	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev0.TestRequest{
+	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev1.TestRequest{
 		Target: "test_selected.py", Filters: []string{"TestThing::test_selected_pass"},
 	})
 	if err != nil {
 		t.Fatalf("Test: %v", err)
 	}
-	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+	if resp.GetResult().GetState() != runtimev1.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
 		t.Fatalf("relative-node result = %s counts=%+v, want one selected passing case\n%s", resp.GetResult().GetState(), resp.GetCounts(), resp.GetOutput())
 	}
 	assertRuntimeTestLeftSourceClean(t, root)
@@ -251,13 +251,13 @@ commands = pytest --pyargs broadpkg {posargs}
 
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	svc.SourceLocation = root
-	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev0.TestRequest{
+	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev1.TestRequest{
 		Filters: []string{"test_selected.py::test_selected_pass"},
 	})
 	if err != nil {
 		t.Fatalf("Test: %v", err)
 	}
-	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+	if resp.GetResult().GetState() != runtimev1.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
 		t.Fatalf("filtered result = %s counts=%+v, want only one passing case\n%s", resp.GetResult().GetState(), resp.GetCounts(), resp.GetOutput())
 	}
 	assertRuntimeTestLeftSourceClean(t, root)
@@ -293,13 +293,13 @@ def test_unselected_fail():
 
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	svc.SourceLocation = root
-	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev0.TestRequest{
+	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev1.TestRequest{
 		Filters: []string{"test_selected_pass"},
 	})
 	if err != nil {
 		t.Fatalf("Test: %v", err)
 	}
-	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+	if resp.GetResult().GetState() != runtimev1.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
 		t.Fatalf("name-filtered result = %s counts=%+v, want one selected passing case\n%s", resp.GetResult().GetState(), resp.GetCounts(), resp.GetOutput())
 	}
 	assertRuntimeTestLeftSourceClean(t, root)
@@ -339,13 +339,13 @@ def test_unselected_failure():
 
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	svc.SourceLocation = root
-	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev0.TestRequest{
+	resp, err := pythonruntime.New(svc).Test(context.Background(), &runtimev1.TestRequest{
 		Filters: []string{`test_selected_one|test_selected_two`},
 	})
 	if err != nil {
 		t.Fatalf("Test: %v", err)
 	}
-	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 2 || resp.GetCounts().GetPassed() != 2 {
+	if resp.GetResult().GetState() != runtimev1.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 2 || resp.GetCounts().GetPassed() != 2 {
 		t.Fatalf("regex-filtered result = %s counts=%+v, want two selected passing cases\n%s", resp.GetResult().GetState(), resp.GetCounts(), resp.GetOutput())
 	}
 	assertRuntimeTestLeftSourceClean(t, root)
@@ -394,9 +394,9 @@ class SampleTests(unittest.TestCase):
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	svc.SourceLocation = root
 	rt := pythonruntime.New(svc)
-	resp, err := rt.Test(context.Background(), &runtimev0.TestRequest{
+	resp, err := rt.Test(context.Background(), &runtimev1.TestRequest{
 		Filters: []string{"test_selected_pass (test_sample.SampleTests)"},
-		Formula: &runtimev0.TestFormula{
+		Formula: &runtimev1.TestFormula{
 			Command:      []string{"python", "runtests.py"},
 			Output:       "unittest-text",
 			Provisioning: map[string]string{"cwd": "tests"},
@@ -405,7 +405,7 @@ class SampleTests(unittest.TestCase):
 	if err != nil {
 		t.Fatalf("Test: %v", err)
 	}
-	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+	if resp.GetResult().GetState() != runtimev1.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
 		t.Fatalf("selected result = %s counts=%+v message=%q, want only the selected passing case", resp.GetResult().GetState(), resp.GetCounts(), resp.GetResult().GetMessage())
 	}
 	if len(resp.GetSuites()) != 1 || len(resp.GetSuites()[0].GetCases()) != 1 ||
@@ -455,11 +455,11 @@ def test_dependency_was_materialized_from_project_declaration():
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	svc.SourceLocation = root
 	rt := pythonruntime.New(svc)
-	resp, err := rt.Test(context.Background(), &runtimev0.TestRequest{})
+	resp, err := rt.Test(context.Background(), &runtimev1.TestRequest{})
 	if err != nil {
 		t.Fatalf("Test: %v", err)
 	}
-	if resp.GetResult().GetState() != runtimev0.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
+	if resp.GetResult().GetState() != runtimev1.TestRunResult_PASSED || resp.GetCounts().GetTotal() != 1 || resp.GetCounts().GetPassed() != 1 {
 		t.Fatalf("result = %s counts=%+v message=%q, want one passed test", resp.GetResult().GetState(), resp.GetCounts(), resp.GetResult().GetMessage())
 	}
 	assertRuntimeTestLeftSourceClean(t, root)

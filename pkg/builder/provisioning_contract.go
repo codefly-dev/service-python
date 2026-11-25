@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	piprequirements "github.com/scagogogo/python-requirements-parser/pkg/parser"
 )
 
@@ -15,10 +15,10 @@ import (
 // Validate that contract here, at Configure's persistence boundary, so Mind and
 // other callers stay toolchain-blind and receive an actionable typed rejection
 // before an invalid experiment reaches the expensive runtime probe.
-func validateProvisioningChange(sourceRoot, key string, change *builderv0.ConfigChange) error {
+func validateProvisioningChange(sourceRoot, key string, change *builderv1.ConfigChange) error {
 	path := "test.provisioning." + key
 	op := change.GetOp()
-	if op == builderv0.ConfigChange_UNSET {
+	if op == builderv1.ConfigChange_UNSET {
 		if !supportedProvisioningKey(key) {
 			return fmt.Errorf("unsupported config path %q (see GetAgentInformation configuration_details)", path)
 		}
@@ -34,28 +34,28 @@ func validateProvisioningChange(sourceRoot, key string, change *builderv0.Config
 	}
 	switch key {
 	case "python":
-		if op != builderv0.ConfigChange_SET {
+		if op != builderv1.ConfigChange_SET {
 			return unsupportedConfigOp(change, path, "SET or UNSET")
 		}
 		if strings.ContainsAny(value, "<>/\\") {
 			return fmt.Errorf("%q must be a CPython version, got %q", path, value)
 		}
 	case "exclude_newer":
-		if op != builderv0.ConfigChange_SET {
+		if op != builderv1.ConfigChange_SET {
 			return unsupportedConfigOp(change, path, "SET or UNSET")
 		}
 		if _, err := time.Parse(time.RFC3339, value); err != nil {
 			return fmt.Errorf("%q must be an RFC3339 timestamp: %w", path, err)
 		}
 	case "editable", "no_project", "no_build_isolation", "persistent_venv":
-		if op != builderv0.ConfigChange_SET {
+		if op != builderv1.ConfigChange_SET {
 			return unsupportedConfigOp(change, path, "SET or UNSET")
 		}
 		if value != "true" && value != "false" {
 			return fmt.Errorf("%q must be \"true\" or \"false\", got %q", path, value)
 		}
 	case "requirements":
-		if op != builderv0.ConfigChange_SET && op != builderv0.ConfigChange_APPEND {
+		if op != builderv1.ConfigChange_SET && op != builderv1.ConfigChange_APPEND {
 			return unsupportedConfigOp(change, path, "SET, APPEND, or UNSET")
 		}
 		values := splitConfigList(value)
@@ -68,14 +68,14 @@ func validateProvisioningChange(sourceRoot, key string, change *builderv0.Config
 			}
 		}
 	case "with":
-		if op != builderv0.ConfigChange_SET && op != builderv0.ConfigChange_APPEND {
+		if op != builderv1.ConfigChange_SET && op != builderv1.ConfigChange_APPEND {
 			return unsupportedConfigOp(change, path, "SET, APPEND, or UNSET")
 		}
 		if err := validatePackageRequirement(value); err != nil {
 			return fmt.Errorf("%q accepts one Python package requirement spec, got %q: %w", path, value, err)
 		}
 	case "dependency_groups", "extras":
-		if op != builderv0.ConfigChange_SET && op != builderv0.ConfigChange_APPEND {
+		if op != builderv1.ConfigChange_SET && op != builderv1.ConfigChange_APPEND {
 			return unsupportedConfigOp(change, path, "SET, APPEND, or UNSET")
 		}
 		values := splitConfigList(value)
@@ -88,7 +88,7 @@ func validateProvisioningChange(sourceRoot, key string, change *builderv0.Config
 			}
 		}
 	case "cwd":
-		if op != builderv0.ConfigChange_SET {
+		if op != builderv1.ConfigChange_SET {
 			return unsupportedConfigOp(change, path, "SET or UNSET")
 		}
 		if err := validateCodeUnitPath(sourceRoot, value, true); err != nil {

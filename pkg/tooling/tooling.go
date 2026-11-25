@@ -10,10 +10,10 @@ import (
 
 	corecode "github.com/codefly-dev/core/code"
 	"github.com/codefly-dev/core/failures"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	codev0 "github.com/codefly-dev/core/generated/go/codefly/services/code/v0"
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
-	toolingv0 "github.com/codefly-dev/core/generated/go/codefly/services/tooling/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	codev1 "github.com/codefly-dev/core/generated/go/codefly/services/code/v1"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
+	toolingv1 "github.com/codefly-dev/core/generated/go/codefly/services/tooling/v1"
 
 	pythoncode "github.com/codefly-dev/service-python/pkg/code"
 	pythonruntime "github.com/codefly-dev/service-python/pkg/runtime"
@@ -27,7 +27,7 @@ import (
 //   - Modification: Fix (ruff), ApplyEdit (via Code)
 //   - Dev: Build, Test (pytest), Lint (ruff) (delegates to Runtime)
 type Tooling struct {
-	toolingv0.UnimplementedToolingServer
+	toolingv1.UnimplementedToolingServer
 	Code    *pythoncode.Code
 	Runtime *pythonruntime.Runtime
 }
@@ -39,33 +39,33 @@ func New(code *pythoncode.Code, rt *pythonruntime.Runtime) *Tooling {
 
 // GetSemanticIndex delegates project parsing to the Core Code server embedded
 // by the Python agent; no project bytes cross the Tooling boundary.
-func (t *Tooling) GetSemanticIndex(ctx context.Context, req *toolingv0.GetSemanticIndexRequest) (*toolingv0.GetSemanticIndexResponse, error) {
+func (t *Tooling) GetSemanticIndex(ctx context.Context, req *toolingv1.GetSemanticIndexRequest) (*toolingv1.GetSemanticIndexResponse, error) {
 	return corecode.NewSourceTooling(t.Code).GetSemanticIndex(ctx, req)
 }
 
 // ── Code Modification ──────────────────────────────────
 
-func (t *Tooling) Fix(ctx context.Context, req *toolingv0.FixRequest) (*toolingv0.FixResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_Fix{Fix: &codev0.FixRequest{File: req.GetFile(), Mode: req.GetMode(), DryRun: req.GetDryRun()}},
+func (t *Tooling) Fix(ctx context.Context, req *toolingv1.FixRequest) (*toolingv1.FixResponse, error) {
+	resp, err := t.Code.Execute(ctx, &codev1.CodeRequest{
+		Operation: &codev1.CodeRequest_Fix{Fix: &codev1.FixRequest{File: req.GetFile(), Mode: req.GetMode(), DryRun: req.GetDryRun()}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tooling fix: %w", err)
 	}
 	fix := resp.GetFix()
 	if fix == nil {
-		return &toolingv0.FixResponse{Success: false, Failure: failures.Ensure(resp.GetFailure(), basev0.FailureCode_FAILURE_CODE_INTERNAL, "tooling.fix", "code service returned no fix result")}, nil
+		return &toolingv1.FixResponse{Success: false, Failure: failures.Ensure(resp.GetFailure(), basev1.FailureCode_FAILURE_CODE_INTERNAL, "tooling.fix", "code service returned no fix result")}, nil
 	}
-	return &toolingv0.FixResponse{
+	return &toolingv1.FixResponse{
 		Success: fix.Success, Content: fix.Content, Actions: fix.Actions, Failure: failures.Clone(resp.GetFailure()),
 		Changed: fix.Changed, BeforeSha256: fix.BeforeSha256, AfterSha256: fix.AfterSha256,
 		Wrote: fix.Wrote, Output: fix.Output,
 	}, nil
 }
 
-func (t *Tooling) ApplyEdit(ctx context.Context, req *toolingv0.ApplyEditRequest) (*toolingv0.ApplyEditResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_ApplyEdit{ApplyEdit: &codev0.ApplyEditRequest{
+func (t *Tooling) ApplyEdit(ctx context.Context, req *toolingv1.ApplyEditRequest) (*toolingv1.ApplyEditResponse, error) {
+	resp, err := t.Code.Execute(ctx, &codev1.CodeRequest{
+		Operation: &codev1.CodeRequest_ApplyEdit{ApplyEdit: &codev1.ApplyEditRequest{
 			File: req.GetFile(), Find: req.GetFind(), Replace: req.GetReplace(), FixMode: req.GetFixMode(), DryRun: req.GetDryRun(),
 		}},
 	})
@@ -74,9 +74,9 @@ func (t *Tooling) ApplyEdit(ctx context.Context, req *toolingv0.ApplyEditRequest
 	}
 	ae := resp.GetApplyEdit()
 	if ae == nil {
-		return &toolingv0.ApplyEditResponse{Success: false, Failure: failures.Ensure(resp.GetFailure(), basev0.FailureCode_FAILURE_CODE_INTERNAL, "tooling.apply-edit", "code service returned no apply-edit result")}, nil
+		return &toolingv1.ApplyEditResponse{Success: false, Failure: failures.Ensure(resp.GetFailure(), basev1.FailureCode_FAILURE_CODE_INTERNAL, "tooling.apply-edit", "code service returned no apply-edit result")}, nil
 	}
-	return &toolingv0.ApplyEditResponse{
+	return &toolingv1.ApplyEditResponse{
 		Success: ae.Success, Content: ae.Content,
 		Strategy: ae.Strategy, FixActions: ae.FixActions, Failure: failures.Clone(resp.GetFailure()),
 		Changed: ae.Changed, BeforeSha256: ae.BeforeSha256, AfterSha256: ae.AfterSha256,
@@ -86,27 +86,27 @@ func (t *Tooling) ApplyEdit(ctx context.Context, req *toolingv0.ApplyEditRequest
 
 // ── Dependencies ───────────────────────────────────────
 
-func (t *Tooling) ListDependencies(ctx context.Context, _ *toolingv0.ListDependenciesRequest) (*toolingv0.ListDependenciesResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_ListDependencies{ListDependencies: &codev0.ListDependenciesRequest{}},
+func (t *Tooling) ListDependencies(ctx context.Context, _ *toolingv1.ListDependenciesRequest) (*toolingv1.ListDependenciesResponse, error) {
+	resp, err := t.Code.Execute(ctx, &codev1.CodeRequest{
+		Operation: &codev1.CodeRequest_ListDependencies{ListDependencies: &codev1.ListDependenciesRequest{}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tooling list_dependencies: %w", err)
 	}
 	ld := resp.GetListDependencies()
 	if ld == nil {
-		return &toolingv0.ListDependenciesResponse{Failure: failures.Ensure(resp.GetFailure(), basev0.FailureCode_FAILURE_CODE_INTERNAL, "tooling.list-dependencies", "code service returned no dependency result")}, nil
+		return &toolingv1.ListDependenciesResponse{Failure: failures.Ensure(resp.GetFailure(), basev1.FailureCode_FAILURE_CODE_INTERNAL, "tooling.list-dependencies", "code service returned no dependency result")}, nil
 	}
-	var deps []*toolingv0.Dependency
+	var deps []*toolingv1.Dependency
 	for _, d := range ld.Dependencies {
-		deps = append(deps, &toolingv0.Dependency{Name: d.Name, Version: d.Version, Direct: d.Direct})
+		deps = append(deps, &toolingv1.Dependency{Name: d.Name, Version: d.Version, Direct: d.Direct})
 	}
-	return &toolingv0.ListDependenciesResponse{Dependencies: deps, Failure: failures.Clone(resp.GetFailure())}, nil
+	return &toolingv1.ListDependenciesResponse{Dependencies: deps, Failure: failures.Clone(resp.GetFailure())}, nil
 }
 
-func (t *Tooling) AddDependency(ctx context.Context, req *toolingv0.AddDependencyRequest) (*toolingv0.AddDependencyResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_AddDependency{AddDependency: &codev0.AddDependencyRequest{
+func (t *Tooling) AddDependency(ctx context.Context, req *toolingv1.AddDependencyRequest) (*toolingv1.AddDependencyResponse, error) {
+	resp, err := t.Code.Execute(ctx, &codev1.CodeRequest{
+		Operation: &codev1.CodeRequest_AddDependency{AddDependency: &codev1.AddDependencyRequest{
 			PackageName: req.PackageName, Version: req.Version,
 		}},
 	})
@@ -115,16 +115,16 @@ func (t *Tooling) AddDependency(ctx context.Context, req *toolingv0.AddDependenc
 	}
 	ad := resp.GetAddDependency()
 	if ad == nil {
-		return &toolingv0.AddDependencyResponse{Success: false, Failure: failures.Ensure(resp.GetFailure(), basev0.FailureCode_FAILURE_CODE_INTERNAL, "tooling.add-dependency", "code service returned no add-dependency result")}, nil
+		return &toolingv1.AddDependencyResponse{Success: false, Failure: failures.Ensure(resp.GetFailure(), basev1.FailureCode_FAILURE_CODE_INTERNAL, "tooling.add-dependency", "code service returned no add-dependency result")}, nil
 	}
-	return &toolingv0.AddDependencyResponse{
+	return &toolingv1.AddDependencyResponse{
 		Success: ad.Success, InstalledVersion: ad.InstalledVersion, Failure: failures.Clone(resp.GetFailure()),
 	}, nil
 }
 
-func (t *Tooling) RemoveDependency(ctx context.Context, req *toolingv0.RemoveDependencyRequest) (*toolingv0.RemoveDependencyResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_RemoveDependency{RemoveDependency: &codev0.RemoveDependencyRequest{
+func (t *Tooling) RemoveDependency(ctx context.Context, req *toolingv1.RemoveDependencyRequest) (*toolingv1.RemoveDependencyResponse, error) {
+	resp, err := t.Code.Execute(ctx, &codev1.CodeRequest{
+		Operation: &codev1.CodeRequest_RemoveDependency{RemoveDependency: &codev1.RemoveDependencyRequest{
 			PackageName: req.PackageName,
 		}},
 	})
@@ -133,42 +133,42 @@ func (t *Tooling) RemoveDependency(ctx context.Context, req *toolingv0.RemoveDep
 	}
 	rd := resp.GetRemoveDependency()
 	if rd == nil {
-		return &toolingv0.RemoveDependencyResponse{Success: false, Failure: failures.Ensure(resp.GetFailure(), basev0.FailureCode_FAILURE_CODE_INTERNAL, "tooling.remove-dependency", "code service returned no remove-dependency result")}, nil
+		return &toolingv1.RemoveDependencyResponse{Success: false, Failure: failures.Ensure(resp.GetFailure(), basev1.FailureCode_FAILURE_CODE_INTERNAL, "tooling.remove-dependency", "code service returned no remove-dependency result")}, nil
 	}
-	return &toolingv0.RemoveDependencyResponse{Success: rd.Success, Failure: failures.Clone(resp.GetFailure())}, nil
+	return &toolingv1.RemoveDependencyResponse{Success: rd.Success, Failure: failures.Clone(resp.GetFailure())}, nil
 }
 
 // ── Analysis ───────────────────────────────────────────
 
-func (t *Tooling) GetProjectInfo(ctx context.Context, _ *toolingv0.GetProjectInfoRequest) (*toolingv0.GetProjectInfoResponse, error) {
-	resp, err := t.Code.Execute(ctx, &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_GetProjectInfo{GetProjectInfo: &codev0.GetProjectInfoRequest{}},
+func (t *Tooling) GetProjectInfo(ctx context.Context, _ *toolingv1.GetProjectInfoRequest) (*toolingv1.GetProjectInfoResponse, error) {
+	resp, err := t.Code.Execute(ctx, &codev1.CodeRequest{
+		Operation: &codev1.CodeRequest_GetProjectInfo{GetProjectInfo: &codev1.GetProjectInfoRequest{}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tooling get_project_info: %w", err)
 	}
 	pi := resp.GetGetProjectInfo()
 	if pi == nil {
-		return &toolingv0.GetProjectInfoResponse{Failure: failures.Ensure(resp.GetFailure(), basev0.FailureCode_FAILURE_CODE_INTERNAL, "tooling.get-project-info", "code service returned no project-info result")}, nil
+		return &toolingv1.GetProjectInfoResponse{Failure: failures.Ensure(resp.GetFailure(), basev1.FailureCode_FAILURE_CODE_INTERNAL, "tooling.get-project-info", "code service returned no project-info result")}, nil
 	}
-	var pkgs []*toolingv0.PackageInfo
+	var pkgs []*toolingv1.PackageInfo
 	for _, p := range pi.Packages {
-		pkgs = append(pkgs, &toolingv0.PackageInfo{
+		pkgs = append(pkgs, &toolingv1.PackageInfo{
 			Name: p.Name, RelativePath: p.RelativePath,
 			Files: p.Files, Imports: p.Imports, Doc: p.Doc,
 		})
 	}
-	var deps []*toolingv0.Dependency
+	var deps []*toolingv1.Dependency
 	for _, d := range pi.Dependencies {
-		deps = append(deps, &toolingv0.Dependency{Name: d.Name, Version: d.Version, Direct: d.Direct})
+		deps = append(deps, &toolingv1.Dependency{Name: d.Name, Version: d.Version, Direct: d.Direct})
 	}
-	var sourceFiles []*toolingv0.SourceFileInfo
+	var sourceFiles []*toolingv1.SourceFileInfo
 	for _, file := range pi.GetSourceFiles() {
-		sourceFiles = append(sourceFiles, &toolingv0.SourceFileInfo{
+		sourceFiles = append(sourceFiles, &toolingv1.SourceFileInfo{
 			Path: file.GetPath(), Imports: append([]string(nil), file.GetImports()...),
 		})
 	}
-	return &toolingv0.GetProjectInfoResponse{
+	return &toolingv1.GetProjectInfoResponse{
 		Module: pi.Module, Language: pi.Language, LanguageVersion: pi.LanguageVersion,
 		Packages: pkgs, Dependencies: deps, FileHashes: pi.FileHashes, SourceFiles: sourceFiles,
 		Failure: failures.Clone(resp.GetFailure()),
@@ -177,34 +177,34 @@ func (t *Tooling) GetProjectInfo(ctx context.Context, _ *toolingv0.GetProjectInf
 
 // ── Dev Validation (delegates to Runtime) ──────────────
 
-func (t *Tooling) Build(_ context.Context, _ *toolingv0.BuildRequest) (*toolingv0.BuildResponse, error) {
-	return &toolingv0.BuildResponse{Success: true, Output: "no build needed (Python)"}, nil
+func (t *Tooling) Build(_ context.Context, _ *toolingv1.BuildRequest) (*toolingv1.BuildResponse, error) {
+	return &toolingv1.BuildResponse{Success: true, Output: "no build needed (Python)"}, nil
 }
 
-func (t *Tooling) Test(ctx context.Context, _ *toolingv0.TestRequest) (*toolingv0.TestResponse, error) {
+func (t *Tooling) Test(ctx context.Context, _ *toolingv1.TestRequest) (*toolingv1.TestResponse, error) {
 	// Pass a non-nil request: Runtime.Test dereferences req.Target, so nil
 	// panicked the agent (and Wool.Catch then nil-deref'd resp.Status).
-	resp, err := t.Runtime.Test(ctx, &runtimev0.TestRequest{})
+	resp, err := t.Runtime.Test(ctx, &runtimev1.TestRequest{})
 	if err != nil {
 		return nil, fmt.Errorf("tooling test: %w", err)
 	}
-	success := resp.Status != nil && resp.Status.State == runtimev0.TestStatus_SUCCESS
-	return &toolingv0.TestResponse{
+	success := resp.Status != nil && resp.Status.State == runtimev1.TestStatus_SUCCESS
+	return &toolingv1.TestResponse{
 		Success: success, Output: resp.Output,
 		TestsRun: resp.TestsRun, TestsPassed: resp.TestsPassed,
 		TestsFailed: resp.TestsFailed, TestsSkipped: resp.TestsSkipped,
 		CoveragePct: resp.CoveragePct, Failures: resp.Failures,
-		Failure: failures.ForOutcome(success, resp.GetStatus().GetFailure(), basev0.FailureCode_FAILURE_CODE_VALIDATION_FAILED, "tooling.test", toolingFailureSummary("tooling test", resp.GetOutput())),
+		Failure: failures.ForOutcome(success, resp.GetStatus().GetFailure(), basev1.FailureCode_FAILURE_CODE_VALIDATION_FAILED, "tooling.test", toolingFailureSummary("tooling test", resp.GetOutput())),
 	}, nil
 }
 
-func (t *Tooling) Lint(ctx context.Context, _ *toolingv0.LintRequest) (*toolingv0.LintResponse, error) {
+func (t *Tooling) Lint(ctx context.Context, _ *toolingv1.LintRequest) (*toolingv1.LintResponse, error) {
 	resp, err := t.Runtime.Lint(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("tooling lint: %w", err)
 	}
-	success := resp.Status != nil && resp.Status.State == runtimev0.LintStatus_SUCCESS
-	return &toolingv0.LintResponse{Success: success, Output: resp.Output, Failure: failures.ForOutcome(success, resp.GetStatus().GetFailure(), basev0.FailureCode_FAILURE_CODE_VALIDATION_FAILED, "tooling.lint", toolingFailureSummary("tooling lint", resp.GetOutput()))}, nil
+	success := resp.Status != nil && resp.Status.State == runtimev1.LintStatus_SUCCESS
+	return &toolingv1.LintResponse{Success: success, Output: resp.Output, Failure: failures.ForOutcome(success, resp.GetStatus().GetFailure(), basev1.FailureCode_FAILURE_CODE_VALIDATION_FAILED, "tooling.lint", toolingFailureSummary("tooling lint", resp.GetOutput()))}, nil
 }
 
 func toolingFailureSummary(operation, output string) string {

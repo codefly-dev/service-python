@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
 	runners "github.com/codefly-dev/core/runners/base"
 )
 
@@ -139,7 +139,7 @@ print(json.dumps({'calls': calls, 'implements': implements, 'module': workdir}))
 	// if declared, native otherwise — keeps mode consistency when possible.
 	env := c.Service.ActiveEnvironment()
 	if env == nil {
-		var rctx *basev0.RuntimeContext
+		var rctx *basev1.RuntimeContext
 		if c.Service.Base != nil && c.Service.Base.Runtime != nil {
 			rctx = c.Service.Base.Runtime.RuntimeContext
 		}

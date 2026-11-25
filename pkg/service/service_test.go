@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	agentv1 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v1"
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
 
@@ -84,7 +84,7 @@ func TestGetAgentInformationGeneric(t *testing.T) {
 	if len(info.Protocols) != 0 {
 		t.Errorf("generic python should advertise no protocols, got %d", len(info.Protocols))
 	}
-	var provisioning *agentv0.ConfigurationValueDetail
+	var provisioning *agentv1.ConfigurationValueDetail
 	for _, detail := range info.GetConfigurationDetails() {
 		if detail.GetName() == "test.provisioning" {
 			provisioning = detail

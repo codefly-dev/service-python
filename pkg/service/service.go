@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"github.com/codefly-dev/core/agents/services"
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
+	agentv1 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v1"
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
 	pythonrunner "github.com/codefly-dev/core/runners/python"
@@ -107,24 +107,24 @@ func (s *Service) ResolveSourceLocation() string {
 // Specializations SHOULD override this to add protocols/techniques relevant
 // to their layer — call this method from the overriding method if they want
 // to inherit the base languages/backends and toolchains.
-func (s *Service) GetAgentInformation(_ context.Context, _ *agentv0.AgentInformationRequest) (*agentv0.AgentInformation, error) {
+func (s *Service) GetAgentInformation(_ context.Context, _ *agentv1.AgentInformationRequest) (*agentv1.AgentInformation, error) {
 	return services.Advertisement{
 		Backends: runners.BackendSupport{
 			Local:  pythonrunner.HasUVRuntime,
 			Nix:    true,
 			Docker: true,
 		},
-		Toolchains: []agentv0.Toolchain_Type{agentv0.Toolchain_PYTHON},
-		Languages:  []agentv0.Language_Type{agentv0.Language_PYTHON},
+		Toolchains: []agentv1.Toolchain_Type{agentv1.Toolchain_PYTHON},
+		Languages:  []agentv1.Language_Type{agentv1.Language_PYTHON},
 		ReadMe:     "Generic Python service managed by uv. Supports Nix runtime.",
 		// The KNOWLEDGE DUMP: what this plugin can be configured with, so the LLM
 		// (and the tooling inner loop) can produce the RIGHT fix and persist it via
 		// Configure into service.codefly.yaml. These are the test.provisioning knobs
 		// the python runner maps to uv flags (SpecFromFormula).
-		Config: []*agentv0.ConfigurationValueDetail{{
+		Config: []*agentv1.ConfigurationValueDetail{{
 			Name:        "test.provisioning",
 			Description: "uv provisioning for the test run. SET/APPEND explicit overrides to make a project's tests installable/runnable; UNSET a persisted path to restore the value derived from project declarations. Multi-valued fields (with, requirements, dependency_groups, extras) are comma-joined.",
-			Fields: []*agentv0.ConfigurationValueInformation{
+			Fields: []*agentv1.ConfigurationValueInformation{
 				{Name: "python", Description: "CPython version, e.g. \"3.9\" → uv --python."},
 				{Name: "editable", Description: "\"true\" installs the code-unit root editable → uv --with-editable; \"false\" deliberately omits that source install and is not a build-failure workaround."},
 				{Name: "requirements", Description: "Comma-separated requirement files → uv --with-requirements (e.g. \"requirements/tests.txt\")."},
@@ -143,7 +143,7 @@ func (s *Service) GetAgentInformation(_ context.Context, _ *agentv0.AgentInforma
 		}},
 		// LLM-facing remediation technique: how to heal an env-blocked test run by
 		// editing config — the exact loop the tooling inner loop runs.
-		Techniques: []*agentv0.AgentTechnique{{
+		Techniques: []*agentv1.AgentTechnique{{
 			Id:          "heal-test-environment",
 			Name:        "Heal a blocked test environment",
 			Description: "When a test run returns Result.State=ERRORED (env-blocked: missing-dependency / version-conflict / import-error), the tests could not run — it is NOT a test failure. Fix the environment, do not edit the patch.",

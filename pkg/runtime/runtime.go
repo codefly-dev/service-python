@@ -15,7 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/codefly-dev/core/agents/services"
-	runtimev0 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v0"
+	runtimev1 "github.com/codefly-dev/core/generated/go/codefly/services/runtime/v1"
 	"github.com/codefly-dev/core/llmout"
 	"github.com/codefly-dev/core/resources"
 	pythonhelpers "github.com/codefly-dev/core/runners/python"
@@ -58,7 +58,7 @@ func New(svc *pythonservice.Service) *Runtime {
 // Load reads the agent identity, stores environment, and resolves the
 // source location. Specializations may override to load additional settings
 // (e.g. FastAPI would also parse its own Settings after this).
-func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtimev0.LoadResponse, error) {
+func (s *Runtime) Load(ctx context.Context, req *runtimev1.LoadRequest) (*runtimev1.LoadResponse, error) {
 	defer s.Wool.Catch()
 
 	response, err := s.Runtime.LoadService(ctx, req, services.RuntimeLoad{Settings: s.Service.Settings})
@@ -80,24 +80,24 @@ func (s *Runtime) Load(ctx context.Context, req *runtimev0.LoadRequest) (*runtim
 // specializations may create a runner environment without writing .venv or
 // uv.lock into the project. This keeps initialization safe for read-only
 // control-plane operations such as source inspection and linting.
-func (s *Runtime) Init(_ context.Context, _ *runtimev0.InitRequest) (*runtimev0.InitResponse, error) {
+func (s *Runtime) Init(_ context.Context, _ *runtimev1.InitRequest) (*runtimev1.InitResponse, error) {
 	defer s.Wool.Catch()
 	return s.Runtime.InitResponse()
 }
 
 // Start is a no-op on the generic runtime — a bare Python "service"
 // without an entrypoint has nothing to run. Specializations override.
-func (s *Runtime) Start(_ context.Context, _ *runtimev0.StartRequest) (*runtimev0.StartResponse, error) {
+func (s *Runtime) Start(_ context.Context, _ *runtimev1.StartRequest) (*runtimev1.StartResponse, error) {
 	return s.Runtime.StartResponse()
 }
 
 // Stop is a no-op on the generic runtime.
-func (s *Runtime) Stop(_ context.Context, _ *runtimev0.StopRequest) (*runtimev0.StopResponse, error) {
+func (s *Runtime) Stop(_ context.Context, _ *runtimev1.StopRequest) (*runtimev1.StopResponse, error) {
 	return s.Runtime.StopResponse()
 }
 
 // Destroy is a no-op on the generic runtime.
-func (s *Runtime) Destroy(_ context.Context, _ *runtimev0.DestroyRequest) (*runtimev0.DestroyResponse, error) {
+func (s *Runtime) Destroy(_ context.Context, _ *runtimev1.DestroyRequest) (*runtimev1.DestroyResponse, error) {
 	return s.Runtime.DestroyResponse()
 }
 
@@ -107,7 +107,7 @@ func (s *Runtime) Destroy(_ context.Context, _ *runtimev0.DestroyRequest) (*runt
 //
 // Specializations should NOT override this unless their layer has extra
 // setup (e.g. fixtures) beyond what Init already did.
-func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtimev0.TestResponse, error) {
+func (s *Runtime) Test(ctx context.Context, req *runtimev1.TestRequest) (*runtimev1.TestResponse, error) {
 	defer s.Wool.Catch()
 	if err := selectioncontract.ValidateRequest(req); err != nil {
 		return nil, fmt.Errorf("python runtime: invalid test request: %w", err)
@@ -214,7 +214,7 @@ func (s *Runtime) Test(ctx context.Context, req *runtimev0.TestRequest) (*runtim
 // executed cases is an execution-environment failure, not the parser's
 // provisional zero-count pass. Ordinary test failures retain their structured
 // suites and remain operation results rather than gRPC transport errors.
-func (s *Runtime) finalizeDefaultTestResponse(req *runtimev0.TestRequest, run *pythonhelpers.StructuredTestRun, runErr error, duration time.Duration, evidence string) (*runtimev0.TestResponse, error) {
+func (s *Runtime) finalizeDefaultTestResponse(req *runtimev1.TestRequest, run *pythonhelpers.StructuredTestRun, runErr error, duration time.Duration, evidence string) (*runtimev1.TestResponse, error) {
 	if runErr != nil && run.LegacyTestSummary().Run == 0 {
 		resp, rpcErr := s.testErrorWithEvidence(runErr, evidence)
 		ensureTestRun(resp, "pytest", req.GetSuite())
@@ -293,15 +293,15 @@ func configuredTestEnvironment(service *resources.Service) []*resources.Environm
 // the legacy case counters alone. Zero-case environment failures and healthy
 // materialization probes both have zero passing tests; logging either as
 // "0 passed" discards the state a developer needs to diagnose the run.
-func testResponseLogSummary(response *runtimev0.TestResponse) string {
+func testResponseLogSummary(response *runtimev1.TestResponse) string {
 	if response == nil {
 		return "runtime returned no structured test response"
 	}
 	result := response.GetResult()
 	counts := response.GetCounts()
 	message := strings.TrimSpace(result.GetMessage())
-	if result.GetState() == runtimev0.TestRunResult_ERRORED ||
-		result.GetState() == runtimev0.TestRunResult_TIMED_OUT ||
+	if result.GetState() == runtimev1.TestRunResult_ERRORED ||
+		result.GetState() == runtimev1.TestRunResult_TIMED_OUT ||
 		counts.GetTotal() == 0 || strings.HasPrefix(message, "env-blocked") {
 		if message != "" {
 			return boundedTestLogMessage(message)
@@ -370,7 +370,7 @@ func boundedTestLogMessage(message string) string {
 // replaces broad discovery, while ordinary filters preserve the derived scope
 // and become pytest's name-expression argument. Typed TestSelection remains
 // the acknowledged, fail-closed acceptance contract.
-func applyPythonFormulaTestScope(req *runtimev0.TestRequest, spec *pythonhelpers.TestFormulaSpec) error {
+func applyPythonFormulaTestScope(req *runtimev1.TestRequest, spec *pythonhelpers.TestFormulaSpec) error {
 	if req.GetSelection() != nil {
 		selectors, err := pythonhelpers.RenderTestSelection(req.GetSelection(), spec.Command, spec.Cwd)
 		if err != nil {
@@ -474,7 +474,7 @@ func isPytestFileTarget(value string) bool {
 	return value != "" && !strings.Contains(value, "::") && strings.HasSuffix(value, ".py")
 }
 
-func pythonDefaultTestScope(req *runtimev0.TestRequest) (string, []string, error) {
+func pythonDefaultTestScope(req *runtimev1.TestRequest) (string, []string, error) {
 	if req.GetSelection() == nil {
 		target := strings.TrimSpace(req.GetTarget())
 		namePatterns := make([]string, 0, len(req.GetFilters()))
@@ -515,13 +515,13 @@ func pythonDefaultTestScope(req *runtimev0.TestRequest) (string, []string, error
 	return selectors[0], nil, nil
 }
 
-func ensureTestRun(resp *runtimev0.TestResponse, runner, suite string) {
+func ensureTestRun(resp *runtimev1.TestResponse, runner, suite string) {
 	if resp != nil && resp.Run == nil {
-		resp.Run = &runtimev0.TestRun{Runner: runner, SuiteName: suite}
+		resp.Run = &runtimev1.TestRun{Runner: runner, SuiteName: suite}
 	}
 }
 
-func acknowledgeTestSelection(req *runtimev0.TestRequest, resp *runtimev0.TestResponse, runErr error) (*runtimev0.TestResponse, error) {
+func acknowledgeTestSelection(req *runtimev1.TestRequest, resp *runtimev1.TestResponse, runErr error) (*runtimev1.TestResponse, error) {
 	if ackErr := selectioncontract.Acknowledge(req, resp); ackErr != nil {
 		return resp, errors.Join(runErr, fmt.Errorf("acknowledge typed test selection: %w", ackErr))
 	}
@@ -529,17 +529,17 @@ func acknowledgeTestSelection(req *runtimev0.TestRequest, resp *runtimev0.TestRe
 }
 
 // Lint runs ruff via the core python helper.
-func (s *Runtime) Lint(ctx context.Context, req *runtimev0.LintRequest) (*runtimev0.LintResponse, error) {
+func (s *Runtime) Lint(ctx context.Context, req *runtimev1.LintRequest) (*runtimev1.LintResponse, error) {
 	defer s.Wool.Catch()
 	if req == nil {
-		req = &runtimev0.LintRequest{}
+		req = &runtimev1.LintRequest{}
 	}
 
 	output, err := pythonhelpers.RunPythonLint(ctx, s.Service.SourceLocation, req.GetTarget())
 	compressed := llmout.Compress("ruff", []string{"check"}, output)
 
-	return &runtimev0.LintResponse{
-		Status: &runtimev0.LintStatus{
+	return &runtimev1.LintResponse{
+		Status: &runtimev1.LintStatus{
 			State:   boolToLintState(err == nil),
 			Message: compressed,
 		},
@@ -549,9 +549,9 @@ func (s *Runtime) Lint(ctx context.Context, req *runtimev0.LintRequest) (*runtim
 
 // Build is Python's read-only compile gate. Packaging remains separate, but a
 // Build RPC must never claim success for syntactically invalid source.
-func (s *Runtime) Build(ctx context.Context, req *runtimev0.BuildRequest) (*runtimev0.BuildResponse, error) {
+func (s *Runtime) Build(ctx context.Context, req *runtimev1.BuildRequest) (*runtimev1.BuildResponse, error) {
 	if req == nil {
-		req = &runtimev0.BuildRequest{}
+		req = &runtimev1.BuildRequest{}
 	}
 	output, err := pythonhelpers.RunPythonBuild(ctx, s.Service.SourceLocation, req.GetTarget())
 	if err != nil {
@@ -571,7 +571,7 @@ func (s *Runtime) Build(ctx context.Context, req *runtimev0.BuildRequest) (*runt
 // rides on top of the configured/derived formula instead of being dropped.
 // Mirrors Mind's InProcessRuntime so local == remote — before this, a healed
 // work_dir sent without a command was a silent no-op on the agent path.
-func resolveTestFormula(req *runtimev0.TestRequest, svc *resources.Service, sourceDir string) (cmd []string, output string, env, prov map[string]string, ok bool) {
+func resolveTestFormula(req *runtimev1.TestRequest, svc *resources.Service, sourceDir string) (cmd []string, output string, env, prov map[string]string, ok bool) {
 	f := req.GetFormula()
 	if f != nil && len(f.GetCommand()) > 0 {
 		return f.GetCommand(), f.GetOutput(), f.GetEnv(), enrichSuppliedProvisioning(f.GetProvisioning(), sourceDir), true
@@ -636,20 +636,20 @@ func enrichSuppliedProvisioning(supplied map[string]string, sourceDir string) ma
 	return pythonhelpers.EnrichSuppliedProvisioning(supplied, sourceDir)
 }
 
-func formulaDerivedFromProject(req *runtimev0.TestRequest, svc *resources.Service) bool {
+func formulaDerivedFromProject(req *runtimev1.TestRequest, svc *resources.Service) bool {
 	if f := req.GetFormula(); f != nil && len(f.GetCommand()) > 0 {
 		return false
 	}
 	return svc == nil || svc.Test == nil || len(svc.Test.Command) == 0
 }
 
-func (s *Runtime) testErrorWithEvidence(err error, evidence string) (*runtimev0.TestResponse, error) {
+func (s *Runtime) testErrorWithEvidence(err error, evidence string) (*runtimev1.TestResponse, error) {
 	if err == nil {
 		msg := pythonhelpers.AppendRuntimeEvidence("test runtime errored before tests could execute", evidence)
-		return &runtimev0.TestResponse{
-			Status: &runtimev0.TestStatus{State: runtimev0.TestStatus_ERROR, Message: msg},
-			Result: &runtimev0.TestRunResult{State: runtimev0.TestRunResult_ERRORED, Message: msg},
-			Counts: &runtimev0.TestCounts{},
+		return &runtimev1.TestResponse{
+			Status: &runtimev1.TestStatus{State: runtimev1.TestStatus_ERROR, Message: msg},
+			Result: &runtimev1.TestRunResult{State: runtimev1.TestRunResult_ERRORED, Message: msg},
+			Counts: &runtimev1.TestCounts{},
 		}, nil
 	}
 	resp, testErr := s.Runtime.TestError(err)
@@ -657,12 +657,12 @@ func (s *Runtime) testErrorWithEvidence(err error, evidence string) (*runtimev0.
 	return resp, testErr
 }
 
-func appendTestResponseEvidence(resp *runtimev0.TestResponse, evidence string) {
+func appendTestResponseEvidence(resp *runtimev1.TestResponse, evidence string) {
 	if resp == nil {
 		return
 	}
 	result := resp.GetResult()
-	if result.GetState() != runtimev0.TestRunResult_ERRORED && !strings.Contains(result.GetMessage(), "env-blocked (") {
+	if result.GetState() != runtimev1.TestRunResult_ERRORED && !strings.Contains(result.GetMessage(), "env-blocked (") {
 		return
 	}
 	evidence = runtimeEvidenceWithDiagnosticRecovery(evidence, result.GetMessage())
@@ -763,12 +763,12 @@ func runtimeEvidenceEnvValue(evidence, key string) string {
 	return ""
 }
 
-func appendTestResponseErrorEvidence(resp *runtimev0.TestResponse, evidence string) {
+func appendTestResponseErrorEvidence(resp *runtimev1.TestResponse, evidence string) {
 	if resp == nil {
 		return
 	}
 	if resp.Counts == nil {
-		resp.Counts = &runtimev0.TestCounts{}
+		resp.Counts = &runtimev1.TestCounts{}
 	}
 	// The legacy TestStatus mirror is deprecated, but core's RuntimeWrapper.TestError
 	// still populates ONLY Status (Result is left nil) — so on the error path this is
@@ -782,16 +782,16 @@ func appendTestResponseErrorEvidence(resp *runtimev0.TestResponse, evidence stri
 	if resp.Result != nil {
 		resp.Result.Message = pythonhelpers.AppendRuntimeEvidence(resp.Result.Message, evidence)
 	} else {
-		resp.Result = &runtimev0.TestRunResult{
-			State:   runtimev0.TestRunResult_ERRORED,
+		resp.Result = &runtimev1.TestRunResult{
+			State:   runtimev1.TestRunResult_ERRORED,
 			Message: pythonhelpers.AppendRuntimeEvidence("", evidence),
 		}
 	}
 }
 
-func boolToLintState(ok bool) runtimev0.LintStatus_Status {
+func boolToLintState(ok bool) runtimev1.LintStatus_Status {
 	if ok {
-		return runtimev0.LintStatus_SUCCESS
+		return runtimev1.LintStatus_SUCCESS
 	}
-	return runtimev0.LintStatus_ERROR
+	return runtimev1.LintStatus_ERROR
 }

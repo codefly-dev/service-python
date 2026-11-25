@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 
 	pythonbuilder "github.com/codefly-dev/service-python/pkg/builder"
@@ -32,19 +32,19 @@ func TestGenericBuilderRejectsUnsupportedCreateAndDeploy(t *testing.T) {
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	b := pythonbuilder.New(svc)
 
-	created, err := b.Create(context.Background(), &builderv0.CreateRequest{})
+	created, err := b.Create(context.Background(), &builderv1.CreateRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.GetState().GetState() != builderv0.CreateStatus_ERROR || !strings.Contains(created.GetState().GetMessage(), "concrete specialization") {
+	if created.GetState().GetState() != builderv1.CreateStatus_ERROR || !strings.Contains(created.GetState().GetMessage(), "concrete specialization") {
 		t.Fatalf("unexpected create response: %+v", created)
 	}
 
-	deployed, err := b.Deploy(context.Background(), &builderv0.DeploymentRequest{})
+	deployed, err := b.Deploy(context.Background(), &builderv1.DeploymentRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deployed.GetState().GetState() != builderv0.DeploymentStatus_ERROR || !strings.Contains(deployed.GetState().GetMessage(), "python-fastapi") {
+	if deployed.GetState().GetState() != builderv1.DeploymentStatus_ERROR || !strings.Contains(deployed.GetState().GetMessage(), "python-fastapi") {
 		t.Fatalf("unexpected deploy response: %+v", deployed)
 	}
 }

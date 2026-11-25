@@ -15,7 +15,7 @@ import (
 	"github.com/codefly-dev/core/agents/services"
 	"github.com/codefly-dev/core/agents/services/audit"
 	"github.com/codefly-dev/core/agents/services/sbom"
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 
 	pythonservice "github.com/codefly-dev/service-python/pkg/service"
@@ -43,7 +43,7 @@ func New(svc *pythonservice.Service) *Builder {
 
 // Load reads the identity and settings. Specializations override to wire
 // endpoints and compute layer-specific paths, but should call this first.
-func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builderv0.LoadResponse, error) {
+func (s *Builder) Load(ctx context.Context, req *builderv1.LoadRequest) (*builderv1.LoadResponse, error) {
 	defer s.Wool.Catch()
 	response, err := s.Builder.LoadService(ctx, req, services.BuilderLoad{Settings: s.Service.Settings})
 	s.Service.SourceLocation = s.Service.ResolveSourceLocation()
@@ -51,7 +51,7 @@ func (s *Builder) Load(ctx context.Context, req *builderv0.LoadRequest) (*builde
 }
 
 // Init records dependency endpoints.
-func (s *Builder) Init(ctx context.Context, req *builderv0.InitRequest) (*builderv0.InitResponse, error) {
+func (s *Builder) Init(ctx context.Context, req *builderv1.InitRequest) (*builderv1.InitResponse, error) {
 	defer s.Wool.Catch()
 	s.Builder.LogInitRequest(req)
 	ctx = s.Wool.Inject(ctx)
@@ -61,7 +61,7 @@ func (s *Builder) Init(ctx context.Context, req *builderv0.InitRequest) (*builde
 
 // Audit is inherited by Python specializations and fails closed when the
 // canonical scanner is unavailable.
-func (s *Builder) Audit(ctx context.Context, req *builderv0.AuditRequest) (*builderv0.AuditResponse, error) {
+func (s *Builder) Audit(ctx context.Context, req *builderv1.AuditRequest) (*builderv1.AuditResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 	result, err := audit.Python(ctx, s.Service.SourceLocation, req.GetIncludeOutdated())
@@ -73,7 +73,7 @@ func (s *Builder) Audit(ctx context.Context, req *builderv0.AuditRequest) (*buil
 
 // SBOM delegates frozen Python lock interpretation to uv's CycloneDX 1.5
 // exporter. Specializations only need to set SourceLocation during Load.
-func (s *Builder) SBOM(ctx context.Context, req *builderv0.SBOMRequest) (*builderv0.SBOMResponse, error) {
+func (s *Builder) SBOM(ctx context.Context, req *builderv1.SBOMRequest) (*builderv1.SBOMResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 	result, err := sbom.Python(ctx, s.Service.SourceLocation, req.GetIncludeDevDependencies())
@@ -86,7 +86,7 @@ func (s *Builder) SBOM(ctx context.Context, req *builderv0.SBOMRequest) (*builde
 // Deploy fails explicitly on the generic layer. Returning a success response
 // without producing a workload made the CLI report a deployment that did not
 // exist. Deployable specializations override this method.
-func (s *Builder) Deploy(ctx context.Context, _ *builderv0.DeploymentRequest) (*builderv0.DeploymentResponse, error) {
+func (s *Builder) Deploy(ctx context.Context, _ *builderv1.DeploymentRequest) (*builderv1.DeploymentResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 	return s.Builder.DeployError(fmt.Errorf("generic Python services do not define a deployable workload; use a deployable specialization such as python-fastapi"))
@@ -94,7 +94,7 @@ func (s *Builder) Deploy(ctx context.Context, _ *builderv0.DeploymentRequest) (*
 
 // Create likewise fails explicitly because the generic layer has no project
 // template. Specializations provide their own factory tree.
-func (s *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*builderv0.CreateResponse, error) {
+func (s *Builder) Create(ctx context.Context, _ *builderv1.CreateRequest) (*builderv1.CreateResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 	return s.Builder.CreateError(fmt.Errorf("generic Python services do not define a project template; use a concrete specialization"))
@@ -107,7 +107,7 @@ func (s *Builder) Create(ctx context.Context, _ *builderv0.CreateRequest) (*buil
 // atomic: a rejected later change cannot leave earlier changes live in memory,
 // and a failed save restores the prior formula. UNSET removes an explicit
 // override so project-derived plugin defaults become effective again.
-func (s *Builder) Configure(ctx context.Context, req *builderv0.ConfigureRequest) (*builderv0.ConfigureResponse, error) {
+func (s *Builder) Configure(ctx context.Context, req *builderv1.ConfigureRequest) (*builderv1.ConfigureResponse, error) {
 	defer s.Wool.Catch()
 	ctx = s.Wool.Inject(ctx)
 	s.configureMu.Lock()
@@ -137,18 +137,18 @@ func (s *Builder) Configure(ctx context.Context, req *builderv0.ConfigureRequest
 		svc.Test = previous
 		return configureError("persist service.codefly.yaml: " + err.Error()), nil
 	}
-	return &builderv0.ConfigureResponse{
-		State: &builderv0.ConfigureStatus{
-			State:   builderv0.ConfigureStatus_SUCCESS,
+	return &builderv1.ConfigureResponse{
+		State: &builderv1.ConfigureStatus{
+			State:   builderv1.ConfigureStatus_SUCCESS,
 			Message: fmt.Sprintf("applied %d change(s)", len(req.GetChanges())),
 		},
 		EffectiveYaml: renderTestFormula(svc.Test),
 	}, nil
 }
 
-func configureError(msg string) *builderv0.ConfigureResponse {
-	return &builderv0.ConfigureResponse{
-		State: &builderv0.ConfigureStatus{State: builderv0.ConfigureStatus_ERROR, Message: msg},
+func configureError(msg string) *builderv1.ConfigureResponse {
+	return &builderv1.ConfigureResponse{
+		State: &builderv1.ConfigureStatus{State: builderv1.ConfigureStatus_ERROR, Message: msg},
 	}
 }
 
@@ -161,7 +161,7 @@ func configureError(msg string) *builderv0.ConfigureResponse {
 //	test.env.<key>           SET or UNSET
 //
 // Unknown paths are rejected — the plugin only configures what it documents.
-func applyConfigChange(sourceRoot string, tf *resources.TestFormula, c *builderv0.ConfigChange) error {
+func applyConfigChange(sourceRoot string, tf *resources.TestFormula, c *builderv1.ConfigChange) error {
 	if tf == nil {
 		return fmt.Errorf("test formula is nil")
 	}
@@ -179,17 +179,17 @@ func applyConfigChange(sourceRoot string, tf *resources.TestFormula, c *builderv
 			return err
 		}
 		switch c.GetOp() {
-		case builderv0.ConfigChange_SET:
+		case builderv1.ConfigChange_SET:
 			if tf.Provisioning == nil {
 				tf.Provisioning = map[string]string{}
 			}
 			tf.Provisioning[key] = val
-		case builderv0.ConfigChange_APPEND:
+		case builderv1.ConfigChange_APPEND:
 			if tf.Provisioning == nil {
 				tf.Provisioning = map[string]string{}
 			}
 			tf.Provisioning[key] = appendCSV(tf.Provisioning[key], val)
-		case builderv0.ConfigChange_UNSET:
+		case builderv1.ConfigChange_UNSET:
 			delete(tf.Provisioning, key)
 			if len(tf.Provisioning) == 0 {
 				tf.Provisioning = nil
@@ -199,18 +199,18 @@ func applyConfigChange(sourceRoot string, tf *resources.TestFormula, c *builderv
 		}
 	case path == "test.command":
 		switch c.GetOp() {
-		case builderv0.ConfigChange_SET:
+		case builderv1.ConfigChange_SET:
 			tf.Command = strings.Fields(val)
-		case builderv0.ConfigChange_UNSET:
+		case builderv1.ConfigChange_UNSET:
 			tf.Command = nil
 		default:
 			return unsupportedConfigOp(c, path, "SET or UNSET")
 		}
 	case path == "test.output":
 		switch c.GetOp() {
-		case builderv0.ConfigChange_SET:
+		case builderv1.ConfigChange_SET:
 			tf.Output = val
-		case builderv0.ConfigChange_UNSET:
+		case builderv1.ConfigChange_UNSET:
 			tf.Output = ""
 		default:
 			return unsupportedConfigOp(c, path, "SET or UNSET")
@@ -221,12 +221,12 @@ func applyConfigChange(sourceRoot string, tf *resources.TestFormula, c *builderv
 			return fmt.Errorf("empty env key in path %q", path)
 		}
 		switch c.GetOp() {
-		case builderv0.ConfigChange_SET:
+		case builderv1.ConfigChange_SET:
 			if tf.Env == nil {
 				tf.Env = map[string]string{}
 			}
 			tf.Env[key] = val
-		case builderv0.ConfigChange_UNSET:
+		case builderv1.ConfigChange_UNSET:
 			delete(tf.Env, key)
 			if len(tf.Env) == 0 {
 				tf.Env = nil
@@ -240,7 +240,7 @@ func applyConfigChange(sourceRoot string, tf *resources.TestFormula, c *builderv
 	return nil
 }
 
-func unsupportedConfigOp(c *builderv0.ConfigChange, path, allowed string) error {
+func unsupportedConfigOp(c *builderv1.ConfigChange, path, allowed string) error {
 	return fmt.Errorf("operation %s is not valid for %q; use %s", c.GetOp(), path, allowed)
 }
 

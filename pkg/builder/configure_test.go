@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	builderv0 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v0"
+	builderv1 "github.com/codefly-dev/core/generated/go/codefly/services/builder/v1"
 	"github.com/codefly-dev/core/resources"
 
 	pythonservice "github.com/codefly-dev/service-python/pkg/service"
@@ -37,15 +37,15 @@ func TestConfigureBatchIsAtomicAndUnsetRestoresDerivation(t *testing.T) {
 	svc.Base.Service = configured
 	b := New(svc)
 
-	reset, err := b.Configure(ctx, &builderv0.ConfigureRequest{Changes: []*builderv0.ConfigChange{
-		{Path: "test.provisioning.editable", Op: builderv0.ConfigChange_UNSET},
-		{Path: "test.provisioning.with", Value: "hypothesis", Op: builderv0.ConfigChange_APPEND},
-		{Path: "test.env.CFLAGS", Op: builderv0.ConfigChange_UNSET},
+	reset, err := b.Configure(ctx, &builderv1.ConfigureRequest{Changes: []*builderv1.ConfigChange{
+		{Path: "test.provisioning.editable", Op: builderv1.ConfigChange_UNSET},
+		{Path: "test.provisioning.with", Value: "hypothesis", Op: builderv1.ConfigChange_APPEND},
+		{Path: "test.env.CFLAGS", Op: builderv1.ConfigChange_UNSET},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reset.GetState().GetState() != builderv0.ConfigureStatus_SUCCESS {
+	if reset.GetState().GetState() != builderv1.ConfigureStatus_SUCCESS {
 		t.Fatalf("reset configuration failed: %+v", reset.GetState())
 	}
 	if _, exists := configured.Test.Provisioning["editable"]; exists {
@@ -62,14 +62,14 @@ func TestConfigureBatchIsAtomicAndUnsetRestoresDerivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rejected, err := b.Configure(ctx, &builderv0.ConfigureRequest{Changes: []*builderv0.ConfigChange{
-		{Path: "test.provisioning.python", Value: "3.11", Op: builderv0.ConfigChange_SET},
-		{Path: "test.env.CFLAGS", Value: "-O0", Op: builderv0.ConfigChange_APPEND},
+	rejected, err := b.Configure(ctx, &builderv1.ConfigureRequest{Changes: []*builderv1.ConfigChange{
+		{Path: "test.provisioning.python", Value: "3.11", Op: builderv1.ConfigChange_SET},
+		{Path: "test.env.CFLAGS", Value: "-O0", Op: builderv1.ConfigChange_APPEND},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rejected.GetState().GetState() != builderv0.ConfigureStatus_ERROR {
+	if rejected.GetState().GetState() != builderv1.ConfigureStatus_ERROR {
 		t.Fatalf("invalid batch was accepted: %+v", rejected.GetState())
 	}
 	if _, exists := configured.Test.Provisioning["python"]; exists {
@@ -83,13 +83,13 @@ func TestConfigureBatchIsAtomicAndUnsetRestoresDerivation(t *testing.T) {
 		t.Fatalf("rejected batch changed persisted configuration\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 
-	cleared, err := b.Configure(ctx, &builderv0.ConfigureRequest{Changes: []*builderv0.ConfigChange{
-		{Path: "test.provisioning.with", Op: builderv0.ConfigChange_UNSET},
+	cleared, err := b.Configure(ctx, &builderv1.ConfigureRequest{Changes: []*builderv1.ConfigChange{
+		{Path: "test.provisioning.with", Op: builderv1.ConfigChange_UNSET},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cleared.GetState().GetState() != builderv0.ConfigureStatus_SUCCESS {
+	if cleared.GetState().GetState() != builderv1.ConfigureStatus_SUCCESS {
 		t.Fatalf("clear configuration failed: %+v", cleared.GetState())
 	}
 	if configured.Test != nil {
@@ -106,10 +106,10 @@ func TestConfigureBatchIsAtomicAndUnsetRestoresDerivation(t *testing.T) {
 
 func TestApplyConfigChangeRejectsUnknownOperation(t *testing.T) {
 	tf := &resources.TestFormula{}
-	err := applyConfigChange(t.TempDir(), tf, &builderv0.ConfigChange{
+	err := applyConfigChange(t.TempDir(), tf, &builderv1.ConfigChange{
 		Path:  "test.provisioning.python",
 		Value: "3.11",
-		Op:    builderv0.ConfigChange_UNKNOWN,
+		Op:    builderv1.ConfigChange_UNKNOWN,
 	})
 	if err == nil || !strings.Contains(err.Error(), "UNKNOWN") {
 		t.Fatalf("unknown operation error = %v", err)
@@ -131,17 +131,17 @@ func TestApplyConfigChangeEnforcesAdvertisedProvisioningSemantics(t *testing.T) 
 	valid := []struct {
 		path  string
 		value string
-		op    builderv0.ConfigChange_Op
+		op    builderv1.ConfigChange_Op
 	}{
-		{path: "test.provisioning.with", value: "pyerfa>=2.0.1.1", op: builderv0.ConfigChange_APPEND},
-		{path: "test.provisioning.requirements", value: "requirements/test.txt", op: builderv0.ConfigChange_APPEND},
-		{path: "test.provisioning.no_build_isolation", value: "true", op: builderv0.ConfigChange_SET},
-		{path: "test.provisioning.exclude_newer", value: "2025-01-01T00:00:00Z", op: builderv0.ConfigChange_SET},
+		{path: "test.provisioning.with", value: "pyerfa>=2.0.1.1", op: builderv1.ConfigChange_APPEND},
+		{path: "test.provisioning.requirements", value: "requirements/test.txt", op: builderv1.ConfigChange_APPEND},
+		{path: "test.provisioning.no_build_isolation", value: "true", op: builderv1.ConfigChange_SET},
+		{path: "test.provisioning.exclude_newer", value: "2025-01-01T00:00:00Z", op: builderv1.ConfigChange_SET},
 	}
 	for _, test := range valid {
 		t.Run("valid_"+strings.ReplaceAll(test.path, ".", "_"), func(t *testing.T) {
 			formula := &resources.TestFormula{}
-			if err := applyConfigChange(root, formula, &builderv0.ConfigChange{Path: test.path, Value: test.value, Op: test.op}); err != nil {
+			if err := applyConfigChange(root, formula, &builderv1.ConfigChange{Path: test.path, Value: test.value, Op: test.op}); err != nil {
 				t.Fatalf("valid change rejected: %v", err)
 			}
 		})
@@ -151,24 +151,24 @@ func TestApplyConfigChangeEnforcesAdvertisedProvisioningSemantics(t *testing.T) 
 		name  string
 		path  string
 		value string
-		op    builderv0.ConfigChange_Op
+		op    builderv1.ConfigChange_Op
 	}{
-		{name: "unknown key", path: "test.provisioning.typo", value: "true", op: builderv0.ConfigChange_SET},
-		{name: "package in requirement files", path: "test.provisioning.requirements", value: "pyerfa>=2.0.1.1", op: builderv0.ConfigChange_APPEND},
-		{name: "empty requirement file list", path: "test.provisioning.requirements", value: ",", op: builderv0.ConfigChange_APPEND},
-		{name: "placeholder package", path: "test.provisioning.with", value: "<code-unit-root>", op: builderv0.ConfigChange_APPEND},
-		{name: "local path package", path: "test.provisioning.with", value: ".", op: builderv0.ConfigChange_APPEND},
-		{name: "invalid boolean", path: "test.provisioning.editable", value: "yes", op: builderv0.ConfigChange_SET},
-		{name: "append scalar", path: "test.provisioning.python", value: "3.10", op: builderv0.ConfigChange_APPEND},
-		{name: "invalid timestamp", path: "test.provisioning.exclude_newer", value: "tomorrow", op: builderv0.ConfigChange_SET},
-		{name: "missing cwd", path: "test.provisioning.cwd", value: "missing", op: builderv0.ConfigChange_SET},
-		{name: "empty extra list", path: "test.provisioning.extras", value: ",", op: builderv0.ConfigChange_APPEND},
-		{name: "valued unset", path: "test.provisioning.with", value: "pytest", op: builderv0.ConfigChange_UNSET},
+		{name: "unknown key", path: "test.provisioning.typo", value: "true", op: builderv1.ConfigChange_SET},
+		{name: "package in requirement files", path: "test.provisioning.requirements", value: "pyerfa>=2.0.1.1", op: builderv1.ConfigChange_APPEND},
+		{name: "empty requirement file list", path: "test.provisioning.requirements", value: ",", op: builderv1.ConfigChange_APPEND},
+		{name: "placeholder package", path: "test.provisioning.with", value: "<code-unit-root>", op: builderv1.ConfigChange_APPEND},
+		{name: "local path package", path: "test.provisioning.with", value: ".", op: builderv1.ConfigChange_APPEND},
+		{name: "invalid boolean", path: "test.provisioning.editable", value: "yes", op: builderv1.ConfigChange_SET},
+		{name: "append scalar", path: "test.provisioning.python", value: "3.10", op: builderv1.ConfigChange_APPEND},
+		{name: "invalid timestamp", path: "test.provisioning.exclude_newer", value: "tomorrow", op: builderv1.ConfigChange_SET},
+		{name: "missing cwd", path: "test.provisioning.cwd", value: "missing", op: builderv1.ConfigChange_SET},
+		{name: "empty extra list", path: "test.provisioning.extras", value: ",", op: builderv1.ConfigChange_APPEND},
+		{name: "valued unset", path: "test.provisioning.with", value: "pytest", op: builderv1.ConfigChange_UNSET},
 	}
 	for _, test := range invalid {
 		t.Run(test.name, func(t *testing.T) {
 			formula := &resources.TestFormula{}
-			err := applyConfigChange(root, formula, &builderv0.ConfigChange{Path: test.path, Value: test.value, Op: test.op})
+			err := applyConfigChange(root, formula, &builderv1.ConfigChange{Path: test.path, Value: test.value, Op: test.op})
 			if err == nil {
 				t.Fatalf("invalid change was accepted: %+v", test)
 			}
@@ -199,13 +199,13 @@ func TestConfigureRejectsCrossTypedValueBeforePersistence(t *testing.T) {
 	svc := pythonservice.New(configured.Agent)
 	svc.Base.Service = configured
 	svc.SourceLocation = root
-	response, err := New(svc).Configure(ctx, &builderv0.ConfigureRequest{Changes: []*builderv0.ConfigChange{{
-		Path: "test.provisioning.requirements", Value: "pyerfa>=2.0.1.1", Op: builderv0.ConfigChange_APPEND,
+	response, err := New(svc).Configure(ctx, &builderv1.ConfigureRequest{Changes: []*builderv1.ConfigChange{{
+		Path: "test.provisioning.requirements", Value: "pyerfa>=2.0.1.1", Op: builderv1.ConfigChange_APPEND,
 	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.GetState().GetState() != builderv0.ConfigureStatus_ERROR {
+	if response.GetState().GetState() != builderv1.ConfigureStatus_ERROR {
 		t.Fatalf("cross-typed value was accepted: %+v", response)
 	}
 	if message := response.GetState().GetMessage(); !strings.Contains(message, "requirement files") || !strings.Contains(message, "pyerfa>=2.0.1.1") {
@@ -248,14 +248,14 @@ func TestConfigureSerializesConcurrentAdditiveRepairs(t *testing.T) {
 		go func() {
 			defer workers.Done()
 			<-start
-			response, err := b.Configure(ctx, &builderv0.ConfigureRequest{Changes: []*builderv0.ConfigChange{{
-				Path: "test.provisioning.with", Value: dependency, Op: builderv0.ConfigChange_APPEND,
+			response, err := b.Configure(ctx, &builderv1.ConfigureRequest{Changes: []*builderv1.ConfigChange{{
+				Path: "test.provisioning.with", Value: dependency, Op: builderv1.ConfigChange_APPEND,
 			}}})
 			if err != nil {
 				errors <- err
 				return
 			}
-			if response.GetState().GetState() != builderv0.ConfigureStatus_SUCCESS {
+			if response.GetState().GetState() != builderv1.ConfigureStatus_SUCCESS {
 				errors <- fmt.Errorf("configure %s: %s", dependency, response.GetState().GetMessage())
 			}
 		}()

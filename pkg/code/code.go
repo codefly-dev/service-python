@@ -12,8 +12,8 @@ import (
 
 	corecode "github.com/codefly-dev/core/code"
 	"github.com/codefly-dev/core/code/semantic"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	codev0 "github.com/codefly-dev/core/generated/go/codefly/services/code/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	codev1 "github.com/codefly-dev/core/generated/go/codefly/services/code/v1"
 	runners "github.com/codefly-dev/core/runners/base"
 
 	pythonservice "github.com/codefly-dev/service-python/pkg/service"
@@ -66,7 +66,7 @@ func (c *Code) EnsureInit() {
 	}
 }
 
-func (c *Code) Execute(ctx context.Context, req *codev0.CodeRequest) (*codev0.CodeResponse, error) {
+func (c *Code) Execute(ctx context.Context, req *codev1.CodeRequest) (*codev1.CodeResponse, error) {
 	c.EnsureInit()
 	return c.PythonCodeServer.Execute(ctx, req)
 }
@@ -81,7 +81,7 @@ func (c *Code) fixPython(ctx context.Context, input corecode.FixInput) (corecode
 	active := c.Service.ActiveEnvironment()
 
 	checkArgs := []string{"check", "--fix-only"}
-	if input.Mode == basev0.FixMode_FIX_MODE_AGGRESSIVE {
+	if input.Mode == basev1.FixMode_FIX_MODE_AGGRESSIVE {
 		checkArgs = append(checkArgs, "--unsafe-fixes")
 	}
 	checkArgs = append(checkArgs, "--stdin-filename", input.Path, "-")
@@ -125,7 +125,7 @@ func (c *Code) runnerEnvironment(ctx context.Context, active runners.RunnerEnvir
 	if active != nil {
 		return active
 	}
-	var runtimeContext *basev0.RuntimeContext
+	var runtimeContext *basev1.RuntimeContext
 	if c.Service.Base != nil && c.Service.Base.Runtime != nil {
 		runtimeContext = c.Service.Base.Runtime.RuntimeContext
 	}

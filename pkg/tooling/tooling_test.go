@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
-	codev0 "github.com/codefly-dev/core/generated/go/codefly/services/code/v0"
-	toolingv0 "github.com/codefly-dev/core/generated/go/codefly/services/tooling/v0"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
+	codev1 "github.com/codefly-dev/core/generated/go/codefly/services/code/v1"
+	toolingv1 "github.com/codefly-dev/core/generated/go/codefly/services/tooling/v1"
 	"github.com/codefly-dev/core/resources"
 
 	pythoncode "github.com/codefly-dev/service-python/pkg/code"
@@ -48,8 +48,8 @@ func TestProjectInfoCarriesRequirementsAndImportsAcrossCodeAndTooling(t *testing
 	service.SourceLocation = dir
 	server := pythoncode.New(service)
 
-	codeResponse, err := server.Execute(context.Background(), &codev0.CodeRequest{
-		Operation: &codev0.CodeRequest_GetProjectInfo{GetProjectInfo: &codev0.GetProjectInfoRequest{}},
+	codeResponse, err := server.Execute(context.Background(), &codev1.CodeRequest{
+		Operation: &codev1.CodeRequest_GetProjectInfo{GetProjectInfo: &codev1.GetProjectInfoRequest{}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestProjectInfoCarriesRequirementsAndImportsAcrossCodeAndTooling(t *testing
 		t.Fatalf("code project info = %+v failure=%+v", project, codeResponse.GetFailure())
 	}
 
-	toolingResponse, err := pythontooling.New(server, nil).GetProjectInfo(context.Background(), &toolingv0.GetProjectInfoRequest{})
+	toolingResponse, err := pythontooling.New(server, nil).GetProjectInfo(context.Background(), &toolingv1.GetProjectInfoRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,11 +70,11 @@ func TestProjectInfoCarriesRequirementsAndImportsAcrossCodeAndTooling(t *testing
 		len(toolingResponse.GetSourceFiles()[0].GetImports()) != 1 || toolingResponse.GetSourceFiles()[0].GetImports()[0] != "flask" {
 		t.Fatalf("tooling project info = %+v", toolingResponse)
 	}
-	semantic, err := pythontooling.New(server, nil).GetSemanticIndex(context.Background(), &toolingv0.GetSemanticIndexRequest{})
+	semantic, err := pythontooling.New(server, nil).GetSemanticIndex(context.Background(), &toolingv1.GetSemanticIndexRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if semantic.GetFailure() != nil || semantic.GetIndex().GetState() != basev0.SemanticIndexState_SEMANTIC_INDEX_STATE_COMPLETE || len(semantic.GetIndex().GetFiles()) != 1 {
+	if semantic.GetFailure() != nil || semantic.GetIndex().GetState() != basev1.SemanticIndexState_SEMANTIC_INDEX_STATE_COMPLETE || len(semantic.GetIndex().GetFiles()) != 1 {
 		t.Fatalf("semantic index = %+v", semantic)
 	}
 }

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	codev0 "github.com/codefly-dev/core/generated/go/codefly/services/code/v0"
+	codev1 "github.com/codefly-dev/core/generated/go/codefly/services/code/v1"
 	"github.com/codefly-dev/core/resources"
 	runners "github.com/codefly-dev/core/runners/base"
 	pythoncode "github.com/codefly-dev/service-python/pkg/code"
@@ -28,7 +28,7 @@ func TestFixUsesRuffAndHonorsDryRun(t *testing.T) {
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	svc.SourceLocation = dir
 	server := pythoncode.New(svc)
-	response, err := server.Execute(context.Background(), &codev0.CodeRequest{Operation: &codev0.CodeRequest_Fix{Fix: &codev0.FixRequest{
+	response, err := server.Execute(context.Background(), &codev1.CodeRequest{Operation: &codev1.CodeRequest_Fix{Fix: &codev1.FixRequest{
 		File: "sample.py", DryRun: true,
 	}}})
 	if err != nil {
@@ -64,7 +64,7 @@ func TestApplyEditRunsRuffSafeFixerByDefault(t *testing.T) {
 	svc := pythonservice.New(&resources.Agent{Kind: "codefly:service", Name: "python"})
 	svc.SourceLocation = dir
 	server := pythoncode.New(svc)
-	response, err := server.Execute(context.Background(), &codev0.CodeRequest{Operation: &codev0.CodeRequest_ApplyEdit{ApplyEdit: &codev0.ApplyEditRequest{
+	response, err := server.Execute(context.Background(), &codev1.CodeRequest{Operation: &codev1.CodeRequest_ApplyEdit{ApplyEdit: &codev1.ApplyEditRequest{
 		File: "sample.py", Find: "return 42", Replace: "return( 43 )",
 	}}})
 	if err != nil {
@@ -126,7 +126,7 @@ func TestCodeIsSafeWhileTheActiveEnvironmentIsRepublished(t *testing.T) {
 	}()
 
 	for i := 0; i < 10; i++ {
-		response, err := server.Execute(ctx, &codev0.CodeRequest{Operation: &codev0.CodeRequest_Fix{Fix: &codev0.FixRequest{
+		response, err := server.Execute(ctx, &codev1.CodeRequest{Operation: &codev1.CodeRequest_Fix{Fix: &codev1.FixRequest{
 			File: "sample.py", DryRun: true,
 		}}})
 		if err != nil {

@@ -38,8 +38,8 @@ import (
 	"sync"
 	"time"
 
-	agentv0 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v0"
-	basev0 "github.com/codefly-dev/core/generated/go/codefly/base/v0"
+	agentv1 "github.com/codefly-dev/core/generated/go/codefly/services/agent/v1"
+	basev1 "github.com/codefly-dev/core/generated/go/codefly/base/v1"
 	runners "github.com/codefly-dev/core/runners/base"
 )
 
@@ -84,7 +84,7 @@ const (
 // as a method so the receiver is the embedding chain's outermost
 // Runtime — that's what s.RegisterCommand needs.
 func (s *Runtime) RegisterReplCommands() {
-	s.RegisterCommand(&agentv0.CommandDefinition{
+	s.RegisterCommand(&agentv1.CommandDefinition{
 		Name:        "exec",
 		Description: "Run a Python snippet in the service's persistent REPL. State (imports, variables, fn defs) is preserved across calls. Mode-consistent: runs in the plugin's configured backend (native/docker/nix).",
 		Usage:       `exec "import app; print(app.config)"`,
@@ -92,7 +92,7 @@ func (s *Runtime) RegisterReplCommands() {
 		Aliases:     []string{"py-exec", "python-exec", "repl-exec"},
 	}, s.cmdExec)
 
-	s.RegisterCommand(&agentv0.CommandDefinition{
+	s.RegisterCommand(&agentv1.CommandDefinition{
 		Name:        "repl-reset",
 		Description: "Drop the persistent Python REPL so the next exec starts fresh (clears all variables + imports). Useful when state gets polluted during debugging.",
 		Tags:        []string{"debug", "repl"},
@@ -148,7 +148,7 @@ func (s *Runtime) resolveReplEnv(ctx context.Context) runners.RunnerEnvironment 
 	if env := s.Service.ActiveEnvironment(); env != nil {
 		return env
 	}
-	var rctx *basev0.RuntimeContext
+	var rctx *basev1.RuntimeContext
 	if s.Service.Base != nil && s.Service.Base.Runtime != nil {
 		rctx = s.Service.Base.Runtime.RuntimeContext
 	}
